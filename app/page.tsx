@@ -10,7 +10,7 @@ import {
 
 type CategoryKey = "controlled" | "peak" | "offpeak";
 type DayType = "all" | "weekdays" | "weekends";
-type Resolution = "auto" | "daily" | "weekly" | "monthly";
+type Resolution = "auto" | "hourly" | "daily" | "weekly" | "monthly";
 type IntervalRow = [number, number, number];
 
 type Dataset = {
@@ -89,6 +89,16 @@ const nzWeekday = new Intl.DateTimeFormat("en-NZ", {
   weekday: "short",
   day: "numeric",
   month: "short",
+  timeZone: "UTC",
+});
+
+const nzHour = new Intl.DateTimeFormat("en-NZ", {
+  weekday: "short",
+  day: "numeric",
+  month: "short",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
   timeZone: "UTC",
 });
 
@@ -176,6 +186,9 @@ function startOfBucket(timestamp: number, resolution: Exclude<Resolution, "auto"
   const month = date.getUTCMonth();
   const day = date.getUTCDate();
 
+  if (resolution === "hourly") {
+    return Date.UTC(year, month, day, date.getUTCHours());
+  }
   if (resolution === "monthly") return Date.UTC(year, month, 1);
   if (resolution === "weekly") {
     const mondayOffset = (date.getUTCDay() + 6) % 7;
@@ -189,6 +202,7 @@ function bucketLabel(
   timestamp: number,
   resolution: Exclude<Resolution, "auto">,
 ) {
+  if (resolution === "hourly") return nzHour.format(timestamp);
   if (resolution === "monthly") return nzMonth.format(timestamp);
   if (resolution === "weekly") return `W/C ${nzShortDate.format(timestamp)}`;
   return nzShortDate.format(timestamp);
@@ -204,6 +218,35 @@ function resolveResolution(
   return "daily";
 }
 
+function shiftUtcYear(timestamp: number, yearOffset: number) {
+  const date = new Date(timestamp);
+  const targetYear = date.getUTCFullYear() + yearOffset;
+  const targetMonth = date.getUTCMonth();
+  const lastDayOfTargetMonth = new Date(
+    Date.UTC(targetYear, targetMonth + 1, 0),
+  ).getUTCDate();
+
+  return Date.UTC(
+    targetYear,
+    targetMonth,
+    Math.min(date.getUTCDate(), lastDayOfTargetMonth),
+    date.getUTCHours(),
+    date.getUTCMinutes(),
+  );
+}
+
+function changePercent(current: number, previous: number) {
+  if (previous === 0) return current === 0 ? 0 : null;
+  return ((current - previous) / previous) * 100;
+}
+
+function formatChange(current: number, previous: number) {
+  const change = changePercent(current, previous);
+  if (change === null) return "New";
+  const sign = change > 0 ? "+" : "";
+  return `${sign}${change.toFixed(1)}%`;
+}
+
 function totalPoint(point: SeriesPoint, enabled: Record<CategoryKey, boolean>) {
   return categoryKeys.reduce(
     (sum, key) => sum + (enabled[key] ? point[key] : 0),
@@ -215,11 +258,13 @@ function Chart({
   data,
   enabled,
   profile = false,
+  comparisonData,
   ariaLabel,
 }: {
   data: SeriesPoint[];
   enabled: Record<CategoryKey, boolean>;
   profile?: boolean;
+  comparisonData?: SeriesPoint[];
   ariaLabel: string;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -247,6 +292,7 @@ function Chart({
       const plotHeight = height - padding.top - padding.bottom;
       const maximum = Math.max(
         ...data.map((point) => totalPoint(point, enabled)),
+        ...(comparisonData ?? []).map((point) => totalPoint(point, enabled)),
         1,
       );
       const axisMaximum = maximum * 1.12;
@@ -278,25 +324,53 @@ function Chart({
       if (data.length === 0) return;
 
       const step = plotWidth / data.length;
-      const barWidth = Math.max(2, Math.min(profile ? 11 : 18, step * 0.7));
+      const hasComparison = Boolean(comparisonData?.length);
+      const groupWidth = Math.max(
+        3,
+        Math.min(profile ? 11 : 28, step * 0.78),
+      );
+      const barGap = hasComparison
+        ? Math.max(1, Math.min(3, step * 0.08))
+        : 0;
+      const barWidth = hasComparison
+        ? Math.max(1, (groupWidth - barGap) / 2)
+        : Math.max(2, Math.min(profile ? 11 : 18, step * 0.7));
 
       data.forEach((point, index) => {
-        let bottom = padding.top + plotHeight;
-        const x = padding.left + step * index + step / 2 - barWidth / 2;
+        const centre = padding.left + step * index + step / 2;
+        const drawStack = (
+          stack: SeriesPoint,
+          x: number,
+          opacity: number,
+        ) => {
+          let bottom = padding.top + plotHeight;
+          context.save();
+          context.globalAlpha = opacity;
+          categoryKeys.forEach((key) => {
+            if (!enabled[key]) return;
+            const barHeight = (stack[key] / axisMaximum) * plotHeight;
+            if (barHeight <= 0) return;
+            context.fillStyle = CATEGORY_META[key].color;
+            context.fillRect(x, bottom - barHeight, barWidth, barHeight);
+            bottom -= barHeight;
+          });
+          context.restore();
+        };
 
-        categoryKeys.forEach((key) => {
-          if (!enabled[key]) return;
-          const barHeight = (point[key] / axisMaximum) * plotHeight;
-          if (barHeight <= 0) return;
-          context.fillStyle = CATEGORY_META[key].color;
-          context.fillRect(x, bottom - barHeight, barWidth, barHeight);
-          bottom -= barHeight;
-        });
+        const currentX = hasComparison
+          ? centre - barGap / 2 - barWidth
+          : centre - barWidth / 2;
+        drawStack(point, currentX, 1);
+
+        const previousPoint = comparisonData?.[index];
+        if (previousPoint) {
+          drawStack(previousPoint, centre + barGap / 2, 0.42);
+        }
 
         if (hoveredIndex === index) {
           context.fillStyle = "#163332";
           context.fillRect(
-            padding.left + step * index + step / 2 - 1,
+            centre - 1,
             padding.top,
             2,
             plotHeight,
@@ -321,7 +395,7 @@ function Chart({
     observer.observe(canvas);
     draw();
     return () => observer.disconnect();
-  }, [data, enabled, hoveredIndex, profile]);
+  }, [comparisonData, data, enabled, hoveredIndex, profile]);
 
   const onMouseMove = (event: ReactMouseEvent<HTMLCanvasElement>) => {
     if (data.length === 0) return;
@@ -359,6 +433,9 @@ function Chart({
           }}
         >
           <strong>{hovered.label}</strong>
+          {comparisonData ? (
+            <em className="tooltip-period">Selected dates</em>
+          ) : null}
           {categoryKeys.map(
             (key) =>
               enabled[key] && (
@@ -369,6 +446,31 @@ function Chart({
                 </span>
               ),
           )}
+          {comparisonData && hoveredIndex !== null ? (
+            <>
+              <em className="tooltip-period tooltip-period-previous">
+                Previous year
+              </em>
+              {categoryKeys.map(
+                (key) =>
+                  enabled[key] && (
+                    <span
+                      className="previous-tooltip-row"
+                      key={`previous-${key}`}
+                    >
+                      <i style={{ background: CATEGORY_META[key].color }} />
+                      {CATEGORY_META[key].shortLabel}
+                      <b>
+                        {numberFormatter.format(
+                          comparisonData[hoveredIndex]?.[key] ?? 0,
+                        )}{" "}
+                        kWh
+                      </b>
+                    </span>
+                  ),
+              )}
+            </>
+          ) : null}
         </div>
       ) : null}
     </div>
@@ -424,22 +526,23 @@ export default function Home() {
   const [startMinute, setStartMinute] = useState(0);
   const [endMinute, setEndMinute] = useState(1440);
   const [resolution, setResolution] = useState<Resolution>("auto");
+  const [comparePreviousYear, setComparePreviousYear] = useState(false);
   const [enabled, setEnabled] = useState<Record<CategoryKey, boolean>>({
     controlled: true,
     peak: true,
     offpeak: true,
   });
   const [rates, setRates] = useState<Record<CategoryKey, number>>({
-    controlled: 15,
-    peak: 30,
-    offpeak: 20,
+    controlled: 28.49,
+    peak: 39.92,
+    offpeak: 26.12,
   });
   const initialised = useRef(false);
 
   useEffect(() => {
     const controller = new AbortController();
 
-    fetch("/electricity-data.json", { signal: controller.signal })
+    fetch("./electricity-data.json", { signal: controller.signal })
       .then((response) => {
         if (!response.ok) throw new Error("The usage data could not be loaded.");
         return response.json() as Promise<Dataset>;
@@ -461,8 +564,37 @@ export default function Home() {
     initialised.current = true;
   }, [dataset]);
 
+  useEffect(() => {
+    const start = inputDateToTimestamp(startDate);
+    const end = inputDateToTimestamp(endDate) + DAY_MS;
+    const daySpan = Math.max(1, Math.round((end - start) / DAY_MS));
+    if (resolution === "hourly" && daySpan > 7) setResolution("auto");
+  }, [endDate, resolution, startDate]);
+
   const coverageStart = dataset ? Date.parse(dataset.meta.firstDate) : 0;
   const coverageEnd = dataset ? Date.parse(dataset.meta.lastDate) : 0;
+
+  useEffect(() => {
+    if (!dataset || !comparePreviousYear) return;
+    const previousStart = shiftUtcYear(inputDateToTimestamp(startDate), -1);
+    const previousEnd = shiftUtcYear(
+      inputDateToTimestamp(endDate) + DAY_MS,
+      -1,
+    );
+    if (
+      previousStart < coverageStart ||
+      previousEnd - INTERVAL_MS > coverageEnd
+    ) {
+      setComparePreviousYear(false);
+    }
+  }, [
+    comparePreviousYear,
+    coverageEnd,
+    coverageStart,
+    dataset,
+    endDate,
+    startDate,
+  ]);
 
   const setPreset = (id: string, dayCount?: number) => {
     if (!dataset) return;
@@ -556,9 +688,85 @@ export default function Home() {
       buckets.set(bucketStart, bucket);
     });
 
-    const trend = [...buckets.entries()]
-      .sort(([a], [b]) => a - b)
-      .map(([, value]) => value);
+    const trendEntries = [...buckets.entries()].sort(([a], [b]) => a - b);
+    const trend = trendEntries.map(([, value]) => value);
+
+    const previousStartTimestamp = shiftUtcYear(startTimestamp, -1);
+    const previousEndTimestamp = shiftUtcYear(endTimestamp, -1);
+    const comparisonAvailable =
+      previousStartTimestamp >= coverageStart &&
+      previousEndTimestamp - INTERVAL_MS <= coverageEnd;
+    const previousTotals: Record<CategoryKey, number> = {
+      controlled: 0,
+      peak: 0,
+      offpeak: 0,
+    };
+    const previousBuckets = new Map<number, SeriesPoint>();
+    const previousDays = new Set<number>();
+
+    if (comparePreviousYear && comparisonAvailable) {
+      dataset.data.forEach(([slot, controlled, uncontrolled]) => {
+        const timestamp = BASE_TIMESTAMP + slot * INTERVAL_MS;
+        if (
+          timestamp < previousStartTimestamp ||
+          timestamp >= previousEndTimestamp
+        ) {
+          return;
+        }
+        if (!passesDayType(timestamp, dayType)) return;
+        if (!passesTimeWindow(timestamp, startMinute, endMinute)) return;
+
+        const values: Record<CategoryKey, number> = {
+          controlled: enabled.controlled ? controlled : 0,
+          peak:
+            enabled.peak && isPeakPeriod(timestamp) ? uncontrolled : 0,
+          offpeak:
+            enabled.offpeak && !isPeakPeriod(timestamp) ? uncontrolled : 0,
+        };
+
+        categoryKeys.forEach((key) => {
+          previousTotals[key] += values[key];
+        });
+        previousDays.add(startOfBucket(timestamp, "daily"));
+
+        const alignedTimestamp = shiftUtcYear(timestamp, 1);
+        const bucketStart = startOfBucket(
+          alignedTimestamp,
+          activeResolution,
+        );
+        const bucket =
+          previousBuckets.get(bucketStart) ??
+          ({
+            label: bucketLabel(bucketStart, activeResolution),
+            controlled: 0,
+            peak: 0,
+            offpeak: 0,
+          } satisfies SeriesPoint);
+        categoryKeys.forEach((key) => {
+          bucket[key] += values[key];
+        });
+        previousBuckets.set(bucketStart, bucket);
+      });
+    }
+
+    const comparisonTotal =
+      previousTotals.controlled + previousTotals.peak + previousTotals.offpeak;
+    const comparisonCost =
+      (previousTotals.controlled * rates.controlled +
+        previousTotals.peak * rates.peak +
+        previousTotals.offpeak * rates.offpeak) /
+      100;
+    const comparisonTrend = trendEntries.map(([key, currentPoint]) => {
+      const bucket = previousBuckets.get(key);
+      return (
+        bucket ?? {
+          label: currentPoint.label,
+          controlled: 0,
+          peak: 0,
+          offpeak: 0,
+        }
+      );
+    });
 
     const averageProfile: SeriesPoint[] = profile.map(
       ({ count, ...point }) => ({
@@ -601,6 +809,24 @@ export default function Home() {
       trend,
       averageProfile,
       activeResolution,
+      dateSpan,
+      comparisonAvailable,
+      comparison:
+        comparePreviousYear && comparisonAvailable
+          ? {
+              totals: previousTotals,
+              total: comparisonTotal,
+              cost: comparisonCost,
+              dayCount: previousDays.size,
+              averageDaily: previousDays.size
+                ? comparisonTotal / previousDays.size
+                : 0,
+              trend: comparisonTrend,
+              dateLabel: `${nzDate.format(
+                previousStartTimestamp,
+              )} – ${nzDate.format(previousEndTimestamp - DAY_MS)}`,
+            }
+          : null,
     };
   }, [
     dataset,
@@ -612,6 +838,9 @@ export default function Home() {
     enabled,
     rates,
     resolution,
+    comparePreviousYear,
+    coverageEnd,
+    coverageStart,
   ]);
 
   const timeOptions = useMemo(
@@ -687,6 +916,12 @@ export default function Home() {
                   peak: true,
                   offpeak: true,
                 });
+                setRates({
+                  controlled: 28.49,
+                  peak: 39.92,
+                  offpeak: 26.12,
+                });
+                setComparePreviousYear(false);
               }}
             >
               Reset
@@ -772,7 +1007,7 @@ export default function Home() {
             <summary>
               <span>
                 <b>Tariff rates</b>
-                <small>Example rates · edit to match your plan</small>
+                <small>Default unit rates · edit as needed</small>
               </span>
               <span className="summary-symbol">+</span>
             </summary>
@@ -835,34 +1070,57 @@ export default function Home() {
                 </button>
               ))}
             </div>
-            <div className="date-inputs">
-              <label>
-                From
-                <input
-                  type="date"
-                  value={startDate}
-                  min={toInputDate(coverageStart)}
-                  max={endDate}
-                  onChange={(event) => {
-                    setStartDate(event.target.value);
-                    setActivePreset("custom");
-                  }}
-                />
-              </label>
-              <span aria-hidden="true">→</span>
-              <label>
-                To
-                <input
-                  type="date"
-                  value={endDate}
-                  min={startDate}
-                  max={toInputDate(coverageEnd)}
-                  onChange={(event) => {
-                    setEndDate(event.target.value);
-                    setActivePreset("custom");
-                  }}
-                />
-              </label>
+            <div className="date-tools">
+              <div className="date-inputs">
+                <label>
+                  From
+                  <input
+                    type="date"
+                    value={startDate}
+                    min={toInputDate(coverageStart)}
+                    max={endDate}
+                    onChange={(event) => {
+                      setStartDate(event.target.value);
+                      setActivePreset("custom");
+                    }}
+                  />
+                </label>
+                <span aria-hidden="true">→</span>
+                <label>
+                  To
+                  <input
+                    type="date"
+                    value={endDate}
+                    min={startDate}
+                    max={toInputDate(coverageEnd)}
+                    onChange={(event) => {
+                      setEndDate(event.target.value);
+                      setActivePreset("custom");
+                    }}
+                  />
+                </label>
+              </div>
+              <button
+                type="button"
+                className={`compare-toggle ${
+                  comparePreviousYear ? "compare-toggle-active" : ""
+                }`}
+                aria-pressed={comparePreviousYear}
+                disabled={!analysis.comparisonAvailable}
+                title={
+                  analysis.comparisonAvailable
+                    ? "Compare this date range with the same dates one year earlier"
+                    : "A complete previous-year range is not available"
+                }
+                onClick={() =>
+                  setComparePreviousYear((current) => !current)
+                }
+              >
+                <span className="compare-switch">
+                  <i />
+                </span>
+                Previous year
+              </button>
             </div>
           </section>
 
@@ -909,6 +1167,82 @@ export default function Home() {
             </article>
           </section>
 
+          {analysis.comparison ? (
+            <section
+              className="panel comparison-panel"
+              aria-label="Previous year comparison"
+            >
+              <div className="comparison-heading">
+                <div>
+                  <span className="eyebrow">Same dates · one year earlier</span>
+                  <h2>Previous year comparison</h2>
+                  <p>{analysis.comparison.dateLabel}</p>
+                </div>
+                <div className="comparison-total">
+                  <span>Total change</span>
+                  <strong
+                    className={
+                      analysis.total > analysis.comparison.total
+                        ? "change-up"
+                        : "change-down"
+                    }
+                  >
+                    {formatChange(
+                      analysis.total,
+                      analysis.comparison.total,
+                    )}
+                  </strong>
+                  <small>
+                    {formatKwh(analysis.comparison.total)} previously
+                  </small>
+                </div>
+              </div>
+              <div className="comparison-table" role="table">
+                <div className="comparison-row comparison-row-head" role="row">
+                  <span role="columnheader">Usage type</span>
+                  <span role="columnheader">Selected</span>
+                  <span role="columnheader">Previous year</span>
+                  <span role="columnheader">Change</span>
+                </div>
+                {categoryKeys.map(
+                  (key) =>
+                    enabled[key] && (
+                      <div className="comparison-row" role="row" key={key}>
+                        <span role="cell">
+                          <i
+                            style={{
+                              background: CATEGORY_META[key].color,
+                            }}
+                          />
+                          {CATEGORY_META[key].shortLabel}
+                        </span>
+                        <b role="cell">
+                          {formatKwh(analysis.totals[key])}
+                        </b>
+                        <b role="cell">
+                          {formatKwh(analysis.comparison.totals[key])}
+                        </b>
+                        <strong
+                          role="cell"
+                          className={
+                            analysis.totals[key] >
+                            analysis.comparison.totals[key]
+                              ? "change-up"
+                              : "change-down"
+                          }
+                        >
+                          {formatChange(
+                            analysis.totals[key],
+                            analysis.comparison.totals[key],
+                          )}
+                        </strong>
+                      </div>
+                    ),
+                )}
+              </div>
+            </section>
+          ) : null}
+
           <section className="panel trend-panel">
             <div className="panel-heading">
               <div>
@@ -926,6 +1260,9 @@ export default function Home() {
                   <option value="auto">
                     Auto ({analysis.activeResolution})
                   </option>
+                  {analysis.dateSpan <= 7 ? (
+                    <option value="hourly">Hour</option>
+                  ) : null}
                   <option value="daily">Day</option>
                   <option value="weekly">Week</option>
                   <option value="monthly">Month</option>
@@ -942,11 +1279,18 @@ export default function Home() {
                     </span>
                   ),
               )}
+              {analysis.comparison ? (
+                <span className="comparison-legend">
+                  <i />
+                  Previous year · lighter bar
+                </span>
+              ) : null}
               <small>kWh</small>
             </div>
             <Chart
               data={analysis.trend}
               enabled={enabled}
+              comparisonData={analysis.comparison?.trend}
               ariaLabel={`Stacked ${analysis.activeResolution} electricity usage chart`}
             />
           </section>

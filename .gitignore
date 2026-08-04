@@ -37,10 +37,13 @@ yarn-error.log*
 # typescript
 next-env.d.ts
 /dist/
+/dist-pages/
 /.wrangler/
 /outputs/
 /work/
 /.npm-cache/
+*.tsbuildinfo
 
 # local source exports (the dashboard uses the processed public JSON)
 /*.csv
+/data/
