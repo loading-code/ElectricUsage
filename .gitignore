@@ -44,6 +44,5 @@ next-env.d.ts
 /.npm-cache/
 *.tsbuildinfo
 
-# local source exports (the dashboard uses the processed public JSON)
+# local source exports outside data/ (the dashboard uses the processed public JSON)
 /*.csv
-/data/
