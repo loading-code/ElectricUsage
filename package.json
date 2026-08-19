@@ -11,8 +11,11 @@
     "build:pages": "vite build --config vite.pages.config.ts",
     "preview:pages": "vite preview --config vite.pages.config.ts",
     "start": "vinext start",
-    "data": "node scripts/process-electricity-data.mjs",
+    "data": "node scripts/process-electricity-data.mjs && node scripts/process-spot-price-data.mjs",
+    "data:usage": "node scripts/process-electricity-data.mjs",
+    "data:spot": "node scripts/process-spot-price-data.mjs",
     "test": "npm run build && node --test tests/rendered-html.test.mjs",
+    "test:data": "node --test tests/spot-data.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate"
   },

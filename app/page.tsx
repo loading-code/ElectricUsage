@@ -7,10 +7,12 @@ import {
   useState,
   type MouseEvent as ReactMouseEvent,
 } from "react";
+import CostComparison from "./cost-comparison";
 
 type CategoryKey = "controlled" | "peak" | "offpeak";
 type DayType = "all" | "weekdays" | "weekends";
 type Resolution = "auto" | "hourly" | "daily" | "weekly" | "monthly";
+type DashboardView = "usage" | "cost";
 type IntervalRow = [number, number, number];
 
 type Dataset = {
@@ -527,6 +529,7 @@ export default function Home() {
   const [endMinute, setEndMinute] = useState(1440);
   const [resolution, setResolution] = useState<Resolution>("auto");
   const [comparePreviousYear, setComparePreviousYear] = useState(false);
+  const [activeView, setActiveView] = useState<DashboardView>("usage");
   const [enabled, setEnabled] = useState<Record<CategoryKey, boolean>>({
     controlled: true,
     peak: true,
@@ -538,6 +541,17 @@ export default function Home() {
     offpeak: 26.12,
   });
   const initialised = useRef(false);
+
+  useEffect(() => {
+    const syncViewFromHash = () => {
+      setActiveView(
+        window.location.hash === "#cost-comparison" ? "cost" : "usage",
+      );
+    };
+    syncViewFromHash();
+    window.addEventListener("hashchange", syncViewFromHash);
+    return () => window.removeEventListener("hashchange", syncViewFromHash);
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -606,6 +620,54 @@ export default function Home() {
     setStartDate(toInputDate(first));
     setEndDate(toInputDate(last));
     setActivePreset(id);
+  };
+
+  const setView = (view: DashboardView) => {
+    setActiveView(view);
+    window.history.replaceState(
+      null,
+      "",
+      view === "cost" ? "#cost-comparison" : window.location.pathname,
+    );
+  };
+
+  const billingPeriods = useMemo(() => {
+    if (!dataset) return [];
+    const periods: { value: string; label: string; start: number; end: number }[] = [];
+    const first = new Date(coverageStart);
+    const last = new Date(coverageEnd);
+    let cursor = Date.UTC(first.getUTCFullYear(), first.getUTCMonth(), 1);
+    const finalMonth = Date.UTC(last.getUTCFullYear(), last.getUTCMonth(), 1);
+
+    while (cursor <= finalMonth) {
+      const date = new Date(cursor);
+      const monthEnd = Date.UTC(
+        date.getUTCFullYear(),
+        date.getUTCMonth() + 1,
+        0,
+      );
+      periods.push({
+        value: `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}`,
+        label: new Intl.DateTimeFormat("en-NZ", {
+          month: "long",
+          year: "numeric",
+          timeZone: "UTC",
+        }).format(cursor),
+        start: Math.max(cursor, coverageStart),
+        end: Math.min(monthEnd, coverageEnd),
+      });
+      cursor = Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1);
+    }
+
+    return periods.reverse();
+  }, [coverageEnd, coverageStart, dataset]);
+
+  const setBillingPeriod = (value: string) => {
+    const period = billingPeriods.find((item) => item.value === value);
+    if (!period) return;
+    setStartDate(toInputDate(period.start));
+    setEndDate(toInputDate(period.end));
+    setActivePreset(`billing-${value}`);
   };
 
   const analysis = useMemo(() => {
@@ -891,12 +953,32 @@ export default function Home() {
           </span>
           <div>
             <span>Home energy</span>
-            <strong>Usage explorer</strong>
+            <strong>Energy explorer</strong>
           </div>
         </div>
-        <div className="coverage-pill">
-          <span className="status-dot" />
-          {nzDate.format(coverageStart)} – {nzDate.format(coverageEnd)}
+        <div className="topbar-tools">
+          <nav className="view-tabs" aria-label="Dashboard pages">
+            <button
+              type="button"
+              className={activeView === "usage" ? "active" : ""}
+              aria-current={activeView === "usage" ? "page" : undefined}
+              onClick={() => setView("usage")}
+            >
+              Usage
+            </button>
+            <button
+              type="button"
+              className={activeView === "cost" ? "active" : ""}
+              aria-current={activeView === "cost" ? "page" : undefined}
+              onClick={() => setView("cost")}
+            >
+              Cost comparison
+            </button>
+          </nav>
+          <div className="coverage-pill">
+            <span className="status-dot" />
+            {nzDate.format(coverageStart)} – {nzDate.format(coverageEnd)}
+          </div>
         </div>
       </header>
 
@@ -1071,6 +1153,26 @@ export default function Home() {
               ))}
             </div>
             <div className="date-tools">
+              {activeView === "cost" ? (
+                <label className="billing-period-select">
+                  Calendar billing month
+                  <select
+                    value={
+                      activePreset.startsWith("billing-")
+                        ? activePreset.replace("billing-", "")
+                        : ""
+                    }
+                    onChange={(event) => setBillingPeriod(event.target.value)}
+                  >
+                    <option value="">Custom / preset range</option>
+                    {billingPeriods.map((period) => (
+                      <option value={period.value} key={period.value}>
+                        {period.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
               <div className="date-inputs">
                 <label>
                   From
@@ -1100,30 +1202,34 @@ export default function Home() {
                   />
                 </label>
               </div>
-              <button
-                type="button"
-                className={`compare-toggle ${
-                  comparePreviousYear ? "compare-toggle-active" : ""
-                }`}
-                aria-pressed={comparePreviousYear}
-                disabled={!analysis.comparisonAvailable}
-                title={
-                  analysis.comparisonAvailable
-                    ? "Compare this date range with the same dates one year earlier"
-                    : "A complete previous-year range is not available"
-                }
-                onClick={() =>
-                  setComparePreviousYear((current) => !current)
-                }
-              >
-                <span className="compare-switch">
-                  <i />
-                </span>
-                Previous year
-              </button>
+              {activeView === "usage" ? (
+                <button
+                  type="button"
+                  className={`compare-toggle ${
+                    comparePreviousYear ? "compare-toggle-active" : ""
+                  }`}
+                  aria-pressed={comparePreviousYear}
+                  disabled={!analysis.comparisonAvailable}
+                  title={
+                    analysis.comparisonAvailable
+                      ? "Compare this date range with the same dates one year earlier"
+                      : "A complete previous-year range is not available"
+                  }
+                  onClick={() =>
+                    setComparePreviousYear((current) => !current)
+                  }
+                >
+                  <span className="compare-switch">
+                    <i />
+                  </span>
+                  Previous year
+                </button>
+              ) : null}
             </div>
           </section>
 
+          {activeView === "usage" ? (
+            <>
           <section className="kpi-grid" aria-label="Usage summary">
             <article className="kpi-card kpi-primary">
               <div className="kpi-topline">
@@ -1220,20 +1326,20 @@ export default function Home() {
                           {formatKwh(analysis.totals[key])}
                         </b>
                         <b role="cell">
-                          {formatKwh(analysis.comparison.totals[key])}
+                          {formatKwh(analysis.comparison!.totals[key])}
                         </b>
                         <strong
                           role="cell"
                           className={
                             analysis.totals[key] >
-                            analysis.comparison.totals[key]
+                            analysis.comparison!.totals[key]
                               ? "change-up"
                               : "change-down"
                           }
                         >
                           {formatChange(
                             analysis.totals[key],
-                            analysis.comparison.totals[key],
+                            analysis.comparison!.totals[key],
                           )}
                         </strong>
                       </div>
@@ -1427,6 +1533,21 @@ export default function Home() {
               Source refreshed from {dataset.meta.source.replace(".csv", "")}
             </span>
           </footer>
+            </>
+          ) : (
+            <CostComparison
+              dataset={dataset}
+              startDate={startDate}
+              endDate={endDate}
+              dayType={dayType}
+              startMinute={startMinute}
+              endMinute={endMinute}
+              enabled={enabled}
+              rates={rates}
+              resolution={resolution}
+              onResolutionChange={setResolution}
+            />
+          )}
         </section>
       </div>
     </main>

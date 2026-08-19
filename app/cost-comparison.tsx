@@ -1,0 +1,922 @@
+"use client";
+
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
+
+type CategoryKey = "controlled" | "peak" | "offpeak";
+type DayType = "all" | "weekdays" | "weekends";
+type Resolution = "auto" | "hourly" | "daily" | "weekly" | "monthly";
+type IntervalRow = [number, number, number];
+type SpotRow = [number, number];
+
+type UsageDataset = {
+  data: IntervalRow[];
+};
+
+type SpotDataset = {
+  meta: {
+    source: string;
+    pointOfConnection: string;
+    firstDate: string;
+    lastDate: string;
+    intervalCount: number;
+    duplicateIntervalCount: number;
+    priceUnit: string;
+  };
+  data: SpotRow[];
+};
+
+type CostRow = {
+  slot: number;
+  timestamp: number;
+  controlled: number;
+  uncontrolled: number;
+  usage: number;
+  tariffLabel: string;
+  tariffRate: number;
+  spotRate: number;
+  tariffCost: number;
+  spotCost: number;
+};
+
+type CostPoint = {
+  timestamp: number;
+  label: string;
+  tariff: number;
+  spot: number;
+};
+
+type CostComparisonProps = {
+  dataset: UsageDataset;
+  startDate: string;
+  endDate: string;
+  dayType: DayType;
+  startMinute: number;
+  endMinute: number;
+  enabled: Record<CategoryKey, boolean>;
+  rates: Record<CategoryKey, number>;
+  resolution: Resolution;
+  onResolutionChange: (resolution: Resolution) => void;
+};
+
+const BASE_TIMESTAMP = Date.UTC(2024, 0, 1);
+const INTERVAL_MS = 30 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+const money = new Intl.NumberFormat("en-NZ", {
+  style: "currency",
+  currency: "NZD",
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+const compactMoney = new Intl.NumberFormat("en-NZ", {
+  style: "currency",
+  currency: "NZD",
+  notation: "compact",
+  maximumFractionDigits: 1,
+});
+
+const decimal = new Intl.NumberFormat("en-NZ", {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+const intervalMoney = new Intl.NumberFormat("en-NZ", {
+  style: "currency",
+  currency: "NZD",
+  minimumFractionDigits: 3,
+  maximumFractionDigits: 3,
+});
+
+const dateFormat = new Intl.DateTimeFormat("en-NZ", {
+  weekday: "short",
+  day: "numeric",
+  month: "short",
+  year: "numeric",
+  timeZone: "UTC",
+});
+
+const shortDate = new Intl.DateTimeFormat("en-NZ", {
+  day: "numeric",
+  month: "short",
+  timeZone: "UTC",
+});
+
+const monthFormat = new Intl.DateTimeFormat("en-NZ", {
+  month: "short",
+  year: "2-digit",
+  timeZone: "UTC",
+});
+
+function pad(value: number) {
+  return String(value).padStart(2, "0");
+}
+
+function inputDateToTimestamp(value: string) {
+  const [year, month, day] = value.split("-").map(Number);
+  return Date.UTC(year, month - 1, day);
+}
+
+function toInputDate(timestamp: number) {
+  const date = new Date(timestamp);
+  return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(
+    date.getUTCDate(),
+  )}`;
+}
+
+function formatTime(timestamp: number) {
+  const date = new Date(timestamp);
+  return `${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}`;
+}
+
+function isPeakPeriod(timestamp: number) {
+  const date = new Date(timestamp);
+  const day = date.getUTCDay();
+  const minute = date.getUTCHours() * 60 + date.getUTCMinutes();
+  return (
+    day >= 1 &&
+    day <= 5 &&
+    ((minute >= 7 * 60 && minute < 11 * 60) ||
+      (minute >= 17 * 60 && minute < 21 * 60))
+  );
+}
+
+function passesDayType(timestamp: number, dayType: DayType) {
+  if (dayType === "all") return true;
+  const day = new Date(timestamp).getUTCDay();
+  const weekend = day === 0 || day === 6;
+  return dayType === "weekends" ? weekend : !weekend;
+}
+
+function passesTimeWindow(
+  timestamp: number,
+  startMinute: number,
+  endMinute: number,
+) {
+  if (startMinute === 0 && endMinute === 1440) return true;
+  const date = new Date(timestamp);
+  const minute = date.getUTCHours() * 60 + date.getUTCMinutes();
+  if (startMinute < endMinute) {
+    return minute >= startMinute && minute < endMinute;
+  }
+  return minute >= startMinute || minute < endMinute;
+}
+
+function startOfBucket(
+  timestamp: number,
+  resolution: Exclude<Resolution, "auto">,
+) {
+  const date = new Date(timestamp);
+  const year = date.getUTCFullYear();
+  const month = date.getUTCMonth();
+  const day = date.getUTCDate();
+
+  if (resolution === "hourly") {
+    return Date.UTC(year, month, day, date.getUTCHours());
+  }
+  if (resolution === "monthly") return Date.UTC(year, month, 1);
+  if (resolution === "weekly") {
+    const mondayOffset = (date.getUTCDay() + 6) % 7;
+    return Date.UTC(year, month, day - mondayOffset);
+  }
+  return Date.UTC(year, month, day);
+}
+
+function resolveResolution(
+  resolution: Resolution,
+  dateSpan: number,
+): Exclude<Resolution, "auto"> {
+  if (resolution !== "auto") return resolution;
+  if (dateSpan > 420) return "monthly";
+  if (dateSpan > 100) return "weekly";
+  return "daily";
+}
+
+function bucketLabel(
+  timestamp: number,
+  resolution: Exclude<Resolution, "auto">,
+) {
+  if (resolution === "hourly") {
+    return `${shortDate.format(timestamp)} ${pad(
+      new Date(timestamp).getUTCHours(),
+    )}:00`;
+  }
+  if (resolution === "monthly") return monthFormat.format(timestamp);
+  if (resolution === "weekly") return `W/C ${shortDate.format(timestamp)}`;
+  return shortDate.format(timestamp);
+}
+
+function selectedValues(
+  timestamp: number,
+  controlled: number,
+  uncontrolled: number,
+  enabled: Record<CategoryKey, boolean>,
+) {
+  const peak = isPeakPeriod(timestamp);
+  const selectedControlled = enabled.controlled ? controlled : 0;
+  const selectedUncontrolled = peak
+    ? enabled.peak
+      ? uncontrolled
+      : 0
+    : enabled.offpeak
+      ? uncontrolled
+      : 0;
+  return {
+    controlled: selectedControlled,
+    uncontrolled: selectedUncontrolled,
+    peak,
+    usage: selectedControlled + selectedUncontrolled,
+  };
+}
+
+function createCostRow(
+  row: IntervalRow,
+  spotRate: number,
+  enabled: Record<CategoryKey, boolean>,
+  rates: Record<CategoryKey, number>,
+): CostRow {
+  const [slot, controlled, uncontrolled] = row;
+  const timestamp = BASE_TIMESTAMP + slot * INTERVAL_MS;
+  const selected = selectedValues(
+    timestamp,
+    controlled,
+    uncontrolled,
+    enabled,
+  );
+  const uncontrolledRate = selected.peak ? rates.peak : rates.offpeak;
+  const tariffCost =
+    (selected.controlled * rates.controlled +
+      selected.uncontrolled * uncontrolledRate) /
+    100;
+  const spotCost = (selected.usage * spotRate) / 100;
+  const labels = [];
+  if (selected.controlled > 0) labels.push("Controlled");
+  if (selected.uncontrolled > 0) {
+    labels.push(selected.peak ? "Peak" : "Off-peak");
+  }
+
+  return {
+    slot,
+    timestamp,
+    controlled: selected.controlled,
+    uncontrolled: selected.uncontrolled,
+    usage: selected.usage,
+    tariffLabel: labels.join(" + ") || (selected.peak ? "Peak" : "Off-peak"),
+    tariffRate:
+      selected.usage > 0
+        ? (tariffCost * 100) / selected.usage
+        : uncontrolledRate,
+    spotRate,
+    tariffCost,
+    spotCost,
+  };
+}
+
+function CostTrendChart({
+  data,
+  selectedDay,
+  onSelectDay,
+  daily,
+}: {
+  data: CostPoint[];
+  selectedDay: string;
+  onSelectDay: (date: string) => void;
+  daily: boolean;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const draw = () => {
+      const bounds = canvas.getBoundingClientRect();
+      const width = Math.max(bounds.width, 300);
+      const height = Math.max(bounds.height, 280);
+      const scale = window.devicePixelRatio || 1;
+      canvas.width = width * scale;
+      canvas.height = height * scale;
+      const context = canvas.getContext("2d");
+      if (!context) return;
+      context.scale(scale, scale);
+      context.clearRect(0, 0, width, height);
+
+      const padding = { top: 18, right: 12, bottom: 38, left: 58 };
+      const plotWidth = width - padding.left - padding.right;
+      const plotHeight = height - padding.top - padding.bottom;
+      const maximum = Math.max(
+        1,
+        ...data.flatMap((point) => [point.tariff, point.spot]),
+      );
+      const axisMaximum = maximum * 1.12;
+
+      context.font = "11px Arial, sans-serif";
+      context.textBaseline = "middle";
+      for (let index = 0; index <= 4; index += 1) {
+        const y = padding.top + (plotHeight / 4) * index;
+        const value = axisMaximum * (1 - index / 4);
+        context.strokeStyle = "#E3E8E7";
+        context.lineWidth = 1;
+        context.beginPath();
+        context.moveTo(padding.left, y);
+        context.lineTo(width - padding.right, y);
+        context.stroke();
+        context.fillStyle = "#6E7D7C";
+        context.textAlign = "right";
+        context.fillText(compactMoney.format(value), padding.left - 9, y);
+      }
+
+      if (data.length === 0) return;
+      const step = plotWidth / data.length;
+      const groupWidth = Math.max(4, Math.min(30, step * 0.78));
+      const gap = Math.max(1, Math.min(3, step * 0.08));
+      const barWidth = Math.max(1, (groupWidth - gap) / 2);
+
+      data.forEach((point, index) => {
+        const centre = padding.left + step * index + step / 2;
+        const values = [
+          { value: point.tariff, color: "#176B87", x: centre - gap / 2 - barWidth },
+          { value: point.spot, color: "#E3A82B", x: centre + gap / 2 },
+        ];
+        values.forEach(({ value, color, x }) => {
+          const barHeight = (value / axisMaximum) * plotHeight;
+          context.fillStyle = color;
+          context.fillRect(
+            x,
+            padding.top + plotHeight - barHeight,
+            barWidth,
+            barHeight,
+          );
+        });
+
+        if (
+          daily &&
+          toInputDate(point.timestamp) === selectedDay
+        ) {
+          context.strokeStyle = "#163332";
+          context.lineWidth = 2;
+          context.strokeRect(
+            centre - groupWidth / 2 - 2,
+            padding.top + 1,
+            groupWidth + 4,
+            plotHeight - 1,
+          );
+        }
+
+        if (hoveredIndex === index) {
+          context.fillStyle = "rgba(22, 51, 50, 0.08)";
+          context.fillRect(
+            centre - step / 2,
+            padding.top,
+            step,
+            plotHeight,
+          );
+        }
+      });
+
+      const tickCount = Math.min(6, data.length);
+      for (let tick = 0; tick < tickCount; tick += 1) {
+        const index =
+          tickCount === 1
+            ? 0
+            : Math.round((tick / (tickCount - 1)) * (data.length - 1));
+        const x = padding.left + step * index + step / 2;
+        context.fillStyle = "#6E7D7C";
+        context.textAlign = "center";
+        context.fillText(data[index].label, x, height - 14);
+      }
+    };
+
+    const observer = new ResizeObserver(draw);
+    observer.observe(canvas);
+    draw();
+    return () => observer.disconnect();
+  }, [data, hoveredIndex, selectedDay, daily]);
+
+  const indexAtEvent = (event: ReactMouseEvent<HTMLCanvasElement>) => {
+    if (data.length === 0) return null;
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const relative = event.clientX - bounds.left - 58;
+    const plotWidth = bounds.width - 58 - 12;
+    return Math.max(
+      0,
+      Math.min(data.length - 1, Math.floor((relative / plotWidth) * data.length)),
+    );
+  };
+
+  const hovered =
+    hoveredIndex !== null && data[hoveredIndex] ? data[hoveredIndex] : null;
+
+  return (
+    <div className="chart-wrap cost-chart-wrap">
+      <canvas
+        ref={canvasRef}
+        className={`chart-canvas cost-chart ${daily ? "cost-chart-clickable" : ""}`}
+        role="img"
+        aria-label="Grouped chart comparing tariff and spot-price electricity costs"
+        onMouseMove={(event) => setHoveredIndex(indexAtEvent(event))}
+        onMouseLeave={() => setHoveredIndex(null)}
+        onClick={(event) => {
+          if (!daily) return;
+          const index = indexAtEvent(event);
+          if (index !== null) onSelectDay(toInputDate(data[index].timestamp));
+        }}
+      />
+      {hovered ? (
+        <div
+          className={`chart-tooltip cost-chart-tooltip ${
+            hoveredIndex !== null && hoveredIndex > data.length * 0.65
+              ? "chart-tooltip-left"
+              : ""
+          }`}
+          style={{
+            left: `${(((hoveredIndex ?? 0) + 0.5) / Math.max(data.length, 1)) * 100}%`,
+          }}
+        >
+          <strong>{hovered.label}</strong>
+          <span>
+            <i style={{ background: "#176B87" }} />Tariff
+            <b>{money.format(hovered.tariff)}</b>
+          </span>
+          <span>
+            <i style={{ background: "#E3A82B" }} />Spot
+            <b>{money.format(hovered.spot)}</b>
+          </span>
+          {daily ? <em>Click to inspect this day</em> : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function IntervalRanking({
+  title,
+  eyebrow,
+  rows,
+}: {
+  title: string;
+  eyebrow: string;
+  rows: CostRow[];
+}) {
+  return (
+    <section className="panel interval-ranking">
+      <span className="eyebrow">{eyebrow}</span>
+      <h3>{title}</h3>
+      <p>Ranked by actual spot-priced cost after all filters.</p>
+      <div className="cost-table-wrap">
+        <table className="cost-table compact-cost-table">
+          <thead>
+            <tr>
+              <th>Interval</th>
+              <th className="numeric">Usage</th>
+              <th className="numeric">Spot rate</th>
+              <th className="numeric">Tariff</th>
+              <th className="numeric">Spot</th>
+              <th className="numeric">Difference</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.slot}>
+                <td>
+                  <strong>{shortDate.format(row.timestamp)}</strong>
+                  <small>{formatTime(row.timestamp)}</small>
+                </td>
+                <td className="numeric">{decimal.format(row.usage)} kWh</td>
+                <td className="numeric">{decimal.format(row.spotRate)}c</td>
+                <td className="numeric">{intervalMoney.format(row.tariffCost)}</td>
+                <td className="numeric">{intervalMoney.format(row.spotCost)}</td>
+                <td
+                  className={`numeric ${
+                    row.spotCost > row.tariffCost ? "change-up" : "change-down"
+                  }`}
+                >
+                  {intervalMoney.format(row.spotCost - row.tariffCost)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+export default function CostComparison({
+  dataset,
+  startDate,
+  endDate,
+  dayType,
+  startMinute,
+  endMinute,
+  enabled,
+  rates,
+  resolution,
+  onResolutionChange,
+}: CostComparisonProps) {
+  const [spotDataset, setSpotDataset] = useState<SpotDataset | null>(null);
+  const [loadError, setLoadError] = useState("");
+  const [selectedDay, setSelectedDay] = useState("");
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch("./spot-price-data.json", { signal: controller.signal })
+      .then((response) => {
+        if (!response.ok) throw new Error("The spot-price data could not be loaded.");
+        return response.json() as Promise<SpotDataset>;
+      })
+      .then(setSpotDataset)
+      .catch((error: Error) => {
+        if (error.name !== "AbortError") setLoadError(error.message);
+      });
+    return () => controller.abort();
+  }, []);
+
+  const analysis = useMemo(() => {
+    if (!spotDataset) return null;
+    const startTimestamp = inputDateToTimestamp(startDate);
+    const endTimestamp = inputDateToTimestamp(endDate) + DAY_MS;
+    const dateSpan = Math.max(1, Math.round((endTimestamp - startTimestamp) / DAY_MS));
+    const activeResolution = resolveResolution(resolution, dateSpan);
+    const priceMap = new Map<number, number>(spotDataset.data);
+    const usageMap = new Map<number, IntervalRow>(
+      dataset.data.map((row) => [row[0], row]),
+    );
+    const rows: CostRow[] = [];
+    let eligibleIntervals = 0;
+
+    dataset.data.forEach((row) => {
+      const timestamp = BASE_TIMESTAMP + row[0] * INTERVAL_MS;
+      if (timestamp < startTimestamp || timestamp >= endTimestamp) return;
+      if (!passesDayType(timestamp, dayType)) return;
+      if (!passesTimeWindow(timestamp, startMinute, endMinute)) return;
+      eligibleIntervals += 1;
+      const spotRate = priceMap.get(row[0]);
+      if (spotRate === undefined) return;
+      rows.push(createCostRow(row, spotRate, enabled, rates));
+    });
+
+    const buckets = new Map<number, CostPoint>();
+    const availableDaySet = new Set<number>();
+    rows.forEach((row) => {
+      const dayStart = startOfBucket(row.timestamp, "daily");
+      availableDaySet.add(dayStart);
+      const key = startOfBucket(row.timestamp, activeResolution);
+      const bucket = buckets.get(key) ?? {
+        timestamp: key,
+        label: bucketLabel(key, activeResolution),
+        tariff: 0,
+        spot: 0,
+      };
+      bucket.tariff += row.tariffCost;
+      bucket.spot += row.spotCost;
+      buckets.set(key, bucket);
+    });
+
+    const tariffCost = rows.reduce((total, row) => total + row.tariffCost, 0);
+    const spotCost = rows.reduce((total, row) => total + row.spotCost, 0);
+    const totalUsage = rows.reduce((total, row) => total + row.usage, 0);
+    const ranked = rows.filter((row) => row.usage > 0);
+    const highest = [...ranked]
+      .sort((a, b) => b.spotCost - a.spotCost)
+      .slice(0, 5);
+    const lowest = [...ranked]
+      .sort((a, b) => a.spotCost - b.spotCost)
+      .slice(0, 5);
+    const availableDays = [...availableDaySet]
+      .sort((a, b) => a - b)
+      .map(toInputDate);
+
+    return {
+      rows,
+      priceMap,
+      usageMap,
+      tariffCost,
+      spotCost,
+      difference: spotCost - tariffCost,
+      totalUsage,
+      tariffUnitCost: totalUsage ? (tariffCost * 100) / totalUsage : 0,
+      spotUnitCost: totalUsage ? (spotCost * 100) / totalUsage : 0,
+      coverage: eligibleIntervals ? (rows.length / eligibleIntervals) * 100 : 0,
+      pricedIntervals: rows.length,
+      eligibleIntervals,
+      trend: [...buckets.values()].sort((a, b) => a.timestamp - b.timestamp),
+      activeResolution,
+      dateSpan,
+      availableDays,
+      highest,
+      lowest,
+    };
+  }, [
+    dataset,
+    spotDataset,
+    startDate,
+    endDate,
+    dayType,
+    startMinute,
+    endMinute,
+    enabled,
+    rates,
+    resolution,
+  ]);
+
+  const availableDayKey = analysis?.availableDays.join("|") ?? "";
+  useEffect(() => {
+    if (!analysis?.availableDays.length) {
+      setSelectedDay("");
+      return;
+    }
+    if (!analysis.availableDays.includes(selectedDay)) {
+      setSelectedDay(analysis.availableDays.at(-1) ?? "");
+    }
+  }, [analysis, availableDayKey, selectedDay]);
+
+  const dayRows = useMemo(() => {
+    if (!analysis || !selectedDay) return [];
+    const dayStart = inputDateToTimestamp(selectedDay);
+    return Array.from({ length: 48 }, (_, index) => {
+      const timestamp = dayStart + index * INTERVAL_MS;
+      const slot = Math.round((timestamp - BASE_TIMESTAMP) / INTERVAL_MS);
+      const usageRow = analysis.usageMap.get(slot) ?? ([slot, 0, 0] as IntervalRow);
+      const price = analysis.priceMap.get(slot);
+      return price === undefined
+        ? {
+            ...createCostRow(usageRow, 0, enabled, rates),
+            spotRate: Number.NaN,
+            spotCost: Number.NaN,
+          }
+        : createCostRow(usageRow, price, enabled, rates);
+    });
+  }, [analysis, selectedDay, enabled, rates]);
+
+  const dayTotals = useMemo(
+    () => ({
+      usage: dayRows.reduce((total, row) => total + row.usage, 0),
+      tariff: dayRows.reduce((total, row) => total + row.tariffCost, 0),
+      spot: dayRows.reduce(
+        (total, row) => total + (Number.isFinite(row.spotCost) ? row.spotCost : 0),
+        0,
+      ),
+    }),
+    [dayRows],
+  );
+
+  if (loadError) {
+    return (
+      <section className="panel cost-state">
+        <span className="state-mark">!</span>
+        <div>
+          <h2>Spot prices unavailable</h2>
+          <p>{loadError}</p>
+        </div>
+      </section>
+    );
+  }
+
+  if (!spotDataset || !analysis) {
+    return (
+      <section className="panel cost-state">
+        <span className="loader" />
+        <div>
+          <h2>Matching prices to your usage</h2>
+          <p>Aligning each half-hour meter reading with Wellington spot prices…</p>
+        </div>
+      </section>
+    );
+  }
+
+  const spotIsCheaper = analysis.spotCost < analysis.tariffCost;
+  const winner = spotIsCheaper ? "Spot pricing" : "Peak / off-peak tariff";
+  const saving = Math.abs(analysis.difference);
+  const selectedDayIndex = analysis.availableDays.indexOf(selectedDay);
+
+  return (
+    <div className="cost-comparison-view">
+      <section className="cost-hero panel">
+        <div>
+          <span className="eyebrow">Energy-only model comparison</span>
+          <h1>Which pricing model costs less?</h1>
+          <p>
+            Every selected half-hour is priced once with your tariff rates and once
+            with the settled Wellington spot price.
+          </p>
+        </div>
+        <div className={`winner-card ${spotIsCheaper ? "winner-spot" : "winner-tariff"}`}>
+          <span>Lower-cost model</span>
+          <strong>{winner}</strong>
+          <b>{money.format(saving)} less</b>
+        </div>
+      </section>
+
+      <section className="kpi-grid cost-kpi-grid" aria-label="Cost comparison summary">
+        <article className="kpi-card kpi-primary">
+          <div className="kpi-topline">
+            <span>Tariff model</span>
+            <span className="kpi-icon">T</span>
+          </div>
+          <strong>{money.format(analysis.tariffCost)}</strong>
+          <small>{decimal.format(analysis.tariffUnitCost)} c/kWh effective rate</small>
+        </article>
+        <article className="kpi-card cost-kpi-spot">
+          <div className="kpi-topline">
+            <span>Spot-price model</span>
+            <span className="kpi-icon">S</span>
+          </div>
+          <strong>{money.format(analysis.spotCost)}</strong>
+          <small>{decimal.format(analysis.spotUnitCost)} c/kWh effective rate</small>
+        </article>
+        <article className="kpi-card">
+          <div className="kpi-topline">
+            <span>Cost difference</span>
+            <span className="kpi-icon">Δ</span>
+          </div>
+          <strong className={spotIsCheaper ? "change-down" : "change-up"}>
+            {money.format(saving)}
+          </strong>
+          <small>{winner} is cheaper for the selected usage</small>
+        </article>
+        <article className="kpi-card">
+          <div className="kpi-topline">
+            <span>Matched coverage</span>
+            <span className="kpi-icon">✓</span>
+          </div>
+          <strong>{analysis.coverage.toFixed(1)}%</strong>
+          <small>
+            {analysis.pricedIntervals.toLocaleString("en-NZ")} of{" "}
+            {analysis.eligibleIntervals.toLocaleString("en-NZ")} intervals
+          </small>
+        </article>
+      </section>
+
+      <section className="panel trend-panel cost-trend-panel">
+        <div className="panel-heading">
+          <div>
+            <span className="eyebrow">Cost over time</span>
+            <h2>Tariff vs spot cost</h2>
+          </div>
+          <label className="resolution-select">
+            Group by
+            <select
+              value={resolution}
+              onChange={(event) =>
+                onResolutionChange(event.target.value as Resolution)
+              }
+            >
+              <option value="auto">Auto ({analysis.activeResolution})</option>
+              {analysis.dateSpan <= 7 ? <option value="hourly">Hour</option> : null}
+              <option value="daily">Day</option>
+              <option value="weekly">Week</option>
+              <option value="monthly">Month</option>
+            </select>
+          </label>
+        </div>
+        <div className="chart-legend cost-chart-legend">
+          <span><i style={{ background: "#176B87" }} />Tariff model</span>
+          <span><i style={{ background: "#E3A82B" }} />Spot-price model</span>
+          <small>NZD</small>
+        </div>
+        <CostTrendChart
+          data={analysis.trend}
+          selectedDay={selectedDay}
+          onSelectDay={setSelectedDay}
+          daily={analysis.activeResolution === "daily"}
+        />
+        <p className="chart-help">
+          {analysis.activeResolution === "daily"
+            ? "Click any pair of bars to open that day’s half-hour breakdown."
+            : "Choose a day below to inspect every half-hour, or group this chart by day."}
+        </p>
+      </section>
+
+      <section className="panel day-drill-panel">
+        <div className="day-drill-heading">
+          <div>
+            <span className="eyebrow">Daily drill-down</span>
+            <h2>Half-hour cost breakdown</h2>
+            <p>The full day is shown here, even when a time-of-day filter is active.</p>
+          </div>
+          <div className="day-picker">
+            <button
+              type="button"
+              aria-label="Previous available day"
+              disabled={selectedDayIndex <= 0}
+              onClick={() => setSelectedDay(analysis.availableDays[selectedDayIndex - 1])}
+            >
+              ←
+            </button>
+            <label>
+              Selected day
+              <select value={selectedDay} onChange={(event) => setSelectedDay(event.target.value)}>
+                {analysis.availableDays.map((day) => (
+                  <option value={day} key={day}>
+                    {dateFormat.format(inputDateToTimestamp(day))}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              type="button"
+              aria-label="Next available day"
+              disabled={
+                selectedDayIndex === -1 ||
+                selectedDayIndex >= analysis.availableDays.length - 1
+              }
+              onClick={() => setSelectedDay(analysis.availableDays[selectedDayIndex + 1])}
+            >
+              →
+            </button>
+          </div>
+        </div>
+
+        <div className="day-summary" aria-label="Selected day totals">
+          <span><b>{decimal.format(dayTotals.usage)} kWh</b>Total usage</span>
+          <span><b>{money.format(dayTotals.tariff)}</b>Tariff cost</span>
+          <span><b>{money.format(dayTotals.spot)}</b>Spot cost</span>
+          <span className={dayTotals.spot > dayTotals.tariff ? "change-up" : "change-down"}>
+            <b>{money.format(Math.abs(dayTotals.spot - dayTotals.tariff))}</b>
+            {dayTotals.spot > dayTotals.tariff ? "Tariff cheaper" : "Spot cheaper"}
+          </span>
+        </div>
+
+        <div className="cost-table-wrap day-cost-table-wrap">
+          <table className="cost-table day-cost-table">
+            <thead>
+              <tr>
+                <th>Half-hour</th>
+                <th>Tariff period</th>
+                <th className="numeric">Controlled</th>
+                <th className="numeric">Uncontrolled</th>
+                <th className="numeric">Tariff rate</th>
+                <th className="numeric">Spot rate</th>
+                <th className="numeric">Tariff cost</th>
+                <th className="numeric">Spot cost</th>
+                <th className="numeric">Difference</th>
+              </tr>
+            </thead>
+            <tbody>
+              {dayRows.map((row) => (
+                <tr key={row.slot}>
+                  <td><strong>{formatTime(row.timestamp)}</strong></td>
+                  <td><span className={`period-tag period-${isPeakPeriod(row.timestamp) ? "peak" : "offpeak"}`}>{row.tariffLabel}</span></td>
+                  <td className="numeric">{decimal.format(row.controlled)}</td>
+                  <td className="numeric">{decimal.format(row.uncontrolled)}</td>
+                  <td className="numeric">{decimal.format(row.tariffRate)}c</td>
+                  <td className="numeric">
+                    {Number.isFinite(row.spotRate) ? `${decimal.format(row.spotRate)}c` : "—"}
+                  </td>
+                  <td className="numeric">{intervalMoney.format(row.tariffCost)}</td>
+                  <td className="numeric">
+                    {Number.isFinite(row.spotCost) ? intervalMoney.format(row.spotCost) : "—"}
+                  </td>
+                  <td
+                    className={`numeric ${
+                      Number.isFinite(row.spotCost) && row.spotCost > row.tariffCost
+                        ? "change-up"
+                        : "change-down"
+                    }`}
+                  >
+                    {Number.isFinite(row.spotCost)
+                      ? intervalMoney.format(row.spotCost - row.tariffCost)
+                      : "—"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <div className="interval-extremes-grid">
+        <IntervalRanking
+          eyebrow="Highest cost"
+          title="Most expensive spot half-hours"
+          rows={analysis.highest}
+        />
+        <IntervalRanking
+          eyebrow="Lowest cost"
+          title="Least expensive spot half-hours"
+          rows={analysis.lowest}
+        />
+      </div>
+
+      <footer className="cost-footer">
+        <p>
+          Spot pricing applies the settled HAY2201 price to all selected usage.
+          The tariff applies controlled, peak and off-peak rates separately.
+          Both exclude daily charges, retailer margins, taxes, hedging and discounts.
+        </p>
+        <span>
+          Spot source: {spotDataset.meta.pointOfConnection} · through{" "}
+          {dateFormat.format(Date.parse(spotDataset.meta.lastDate))}
+        </span>
+      </footer>
+    </div>
+  );
+}
