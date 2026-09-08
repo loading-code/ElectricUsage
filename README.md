@@ -12,6 +12,8 @@ An interactive dashboard for exploring controlled, peak, and off-peak electricit
 ## Cost comparison
 
 - The tariff model applies the editable controlled, peak, and off-peak unit rates.
+- The tariff model also applies an editable daily charge, defaulting to $2.7544
+  per included day including GST.
 - The spot model applies the settled HAY2201 half-hour price to all selected usage.
 - Optional spot-plan metering, service, levy, network delivery, daily and loss
   charges can be edited or disabled independently.

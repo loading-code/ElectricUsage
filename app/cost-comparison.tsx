@@ -140,6 +140,8 @@ type CostRow = {
   tariffLabel: string;
   tariffRate: number;
   spotRate: number;
+  tariffEnergyCost: number;
+  tariffDailyCost: number;
   tariffCost: number;
   spotEnergyCost: number;
   chargeCosts: Record<SpotChargeKey, number>;
@@ -162,6 +164,7 @@ type CostComparisonProps = {
   endMinute: number;
   enabled: Record<CategoryKey, boolean>;
   rates: Record<CategoryKey, number>;
+  tariffDailyCharge: number;
   spotCharges: SpotChargeSettings;
   onSpotChargesChange: (settings: SpotChargeSettings) => void;
   onResetSpotCharges: () => void;
@@ -351,6 +354,7 @@ function createCostRow(
   spotRate: number,
   enabled: Record<CategoryKey, boolean>,
   rates: Record<CategoryKey, number>,
+  tariffDailyCharge: number,
   spotCharges: SpotChargeSettings,
   dailyDivisor = 0,
 ): CostRow {
@@ -363,10 +367,13 @@ function createCostRow(
     enabled,
   );
   const uncontrolledRate = selected.peak ? rates.peak : rates.offpeak;
-  const tariffCost =
-    (selected.controlled * rates.controlled +
-      selected.uncontrolled * uncontrolledRate) /
-    100;
+  const tariffEnergyCost =
+      (selected.controlled * rates.controlled +
+        selected.uncontrolled * uncontrolledRate) /
+      100;
+  const tariffDailyCost =
+    dailyDivisor > 0 ? tariffDailyCharge / dailyDivisor : 0;
+  const tariffCost = tariffEnergyCost + tariffDailyCost;
   const spotEnergyCost = (selected.usage * spotRate) / 100;
   const chargeCosts = emptyChargeCosts();
   const withGst = (key: SpotChargeKey, amount: number) =>
@@ -432,9 +439,11 @@ function createCostRow(
     tariffLabel: labels.join(" + ") || (selected.peak ? "Peak" : "Off-peak"),
     tariffRate:
       selected.usage > 0
-        ? (tariffCost * 100) / selected.usage
+        ? (tariffEnergyCost * 100) / selected.usage
         : uncontrolledRate,
     spotRate,
+    tariffEnergyCost,
+    tariffDailyCost,
     tariffCost,
     spotEnergyCost,
     chargeCosts,
@@ -795,6 +804,7 @@ export default function CostComparison({
   endMinute,
   enabled,
   rates,
+  tariffDailyCharge,
   spotCharges,
   onSpotChargesChange,
   onResetSpotCharges,
@@ -824,7 +834,9 @@ export default function CostComparison({
     const startTimestamp = inputDateToTimestamp(startDate);
     const endTimestamp = inputDateToTimestamp(endDate) + DAY_MS;
     const dateSpan = Math.max(1, Math.round((endTimestamp - startTimestamp) / DAY_MS));
-    const activeResolution = resolveResolution(resolution, dateSpan);
+    const requestedResolution =
+      resolution === "hourly" && dateSpan > 7 ? "auto" : resolution;
+    const activeResolution = resolveResolution(requestedResolution, dateSpan);
     const priceMap = new Map<number, number>(spotDataset.data);
     const usageMap = new Map<number, IntervalRow>(
       dataset.data.map((row) => [row[0], row]),
@@ -860,6 +872,7 @@ export default function CostComparison({
         spotRate,
         enabled,
         rates,
+        tariffDailyCharge,
         spotCharges,
         dailyIntervalCounts.get(dayStart) ?? 0,
       );
@@ -883,6 +896,14 @@ export default function CostComparison({
     });
 
     const tariffCost = rows.reduce((total, row) => total + row.tariffCost, 0);
+    const tariffEnergyCost = rows.reduce(
+      (total, row) => total + row.tariffEnergyCost,
+      0,
+    );
+    const tariffDailyCost = rows.reduce(
+      (total, row) => total + row.tariffDailyCost,
+      0,
+    );
     const spotEnergyCost = rows.reduce(
       (total, row) => total + row.spotEnergyCost,
       0,
@@ -911,6 +932,8 @@ export default function CostComparison({
       priceMap,
       usageMap,
       tariffCost,
+      tariffEnergyCost,
+      tariffDailyCost,
       spotEnergyCost,
       chargeTotals,
       spotCost,
@@ -938,24 +961,18 @@ export default function CostComparison({
     endMinute,
     enabled,
     rates,
+    tariffDailyCharge,
     spotCharges,
     resolution,
   ]);
 
-  const availableDayKey = analysis?.availableDays.join("|") ?? "";
-  useEffect(() => {
-    if (!analysis?.availableDays.length) {
-      setSelectedDay("");
-      return;
-    }
-    if (!analysis.availableDays.includes(selectedDay)) {
-      setSelectedDay(analysis.availableDays.at(-1) ?? "");
-    }
-  }, [analysis, availableDayKey, selectedDay]);
+  const effectiveSelectedDay = analysis?.availableDays.includes(selectedDay)
+    ? selectedDay
+    : (analysis?.availableDays.at(-1) ?? "");
 
   const dayRows = useMemo(() => {
-    if (!analysis || !selectedDay) return [];
-    const dayStart = inputDateToTimestamp(selectedDay);
+    if (!analysis || !effectiveSelectedDay) return [];
+    const dayStart = inputDateToTimestamp(effectiveSelectedDay);
     const candidates = Array.from({ length: 48 }, (_, index) => {
       const timestamp = dayStart + index * INTERVAL_MS;
       const slot = Math.round((timestamp - BASE_TIMESTAMP) / INTERVAL_MS);
@@ -970,7 +987,14 @@ export default function CostComparison({
     return candidates.map(({ usageRow, price }) => {
       return price === undefined
         ? {
-            ...createCostRow(usageRow, 0, enabled, rates, spotCharges),
+            ...createCostRow(
+              usageRow,
+              0,
+              enabled,
+              rates,
+              tariffDailyCharge,
+              spotCharges,
+            ),
             spotRate: Number.NaN,
             spotEnergyCost: Number.NaN,
             chargeCosts: emptyChargeCosts(),
@@ -981,11 +1005,19 @@ export default function CostComparison({
             price,
             enabled,
             rates,
+            tariffDailyCharge,
             spotCharges,
             pricedIntervalCount,
           );
     });
-  }, [analysis, selectedDay, enabled, rates, spotCharges]);
+  }, [
+    analysis,
+    effectiveSelectedDay,
+    enabled,
+    rates,
+    tariffDailyCharge,
+    spotCharges,
+  ]);
 
   const dayTotals = useMemo(
     () => ({
@@ -1031,7 +1063,7 @@ export default function CostComparison({
   const spotIsCheaper = analysis.spotCost < analysis.tariffCost;
   const winner = spotIsCheaper ? "Spot pricing" : "Peak / off-peak tariff";
   const saving = Math.abs(analysis.difference);
-  const selectedDayIndex = analysis.availableDays.indexOf(selectedDay);
+  const selectedDayIndex = analysis.availableDays.indexOf(effectiveSelectedDay);
 
   return (
     <div className="cost-comparison-view">
@@ -1059,7 +1091,11 @@ export default function CostComparison({
             <span className="kpi-icon">T</span>
           </div>
           <strong>{money.format(analysis.tariffCost)}</strong>
-          <small>{decimal.format(analysis.tariffUnitCost)} c/kWh effective rate</small>
+          <small className="kpi-cost-breakdown">
+            {money.format(analysis.tariffEnergyCost)} usage +{" "}
+            {money.format(analysis.tariffDailyCost)} daily ·{" "}
+            {decimal.format(analysis.tariffUnitCost)} c/kWh effective
+          </small>
         </article>
         <article className="kpi-card cost-kpi-spot">
           <div className="kpi-topline">
@@ -1109,7 +1145,11 @@ export default function CostComparison({
           <label className="resolution-select">
             Group by
             <select
-              value={resolution}
+              value={
+                resolution === "hourly" && analysis.dateSpan > 7
+                  ? "auto"
+                  : resolution
+              }
               onChange={(event) =>
                 onResolutionChange(event.target.value as Resolution)
               }
@@ -1129,7 +1169,7 @@ export default function CostComparison({
         </div>
         <CostTrendChart
           data={analysis.trend}
-          selectedDay={selectedDay}
+          selectedDay={effectiveSelectedDay}
           onSelectDay={setSelectedDay}
           daily={analysis.activeResolution === "daily"}
         />
@@ -1158,7 +1198,10 @@ export default function CostComparison({
             </button>
             <label>
               Selected day
-              <select value={selectedDay} onChange={(event) => setSelectedDay(event.target.value)}>
+              <select
+                value={effectiveSelectedDay}
+                onChange={(event) => setSelectedDay(event.target.value)}
+              >
                 {analysis.availableDays.map((day) => (
                   <option value={day} key={day}>
                     {dateFormat.format(inputDateToTimestamp(day))}
@@ -1200,7 +1243,9 @@ export default function CostComparison({
                 <th className="numeric">Uncontrolled</th>
                 <th className="numeric">Tariff rate</th>
                 <th className="numeric">Spot rate</th>
-                <th className="numeric">Tariff cost</th>
+                <th className="numeric">Tariff energy</th>
+                <th className="numeric">Tariff daily</th>
+                <th className="numeric">Tariff total</th>
                 <th className="numeric">Spot energy</th>
                 <th className="numeric">Add-ons</th>
                 <th className="numeric">Spot total</th>
@@ -1217,6 +1262,12 @@ export default function CostComparison({
                   <td className="numeric">{decimal.format(row.tariffRate)}c</td>
                   <td className="numeric">
                     {Number.isFinite(row.spotRate) ? `${decimal.format(row.spotRate)}c` : "—"}
+                  </td>
+                  <td className="numeric">
+                    {intervalMoney.format(row.tariffEnergyCost)}
+                  </td>
+                  <td className="numeric">
+                    {intervalMoney.format(row.tariffDailyCost)}
                   </td>
                   <td className="numeric">{intervalMoney.format(row.tariffCost)}</td>
                   <td className="numeric">
@@ -1266,10 +1317,11 @@ export default function CostComparison({
       <footer className="cost-footer">
         <p>
           Spot pricing applies the settled HAY2201 price to all selected usage.
-          The tariff applies controlled, peak and off-peak rates separately.
-          Enabled daily fees are charged once per included day and allocated evenly
-          across its displayed half-hours. GST is applied only to add-ons marked
-          + GST; base spot and tariff rates are unchanged.
+          The tariff applies controlled, peak and off-peak rates plus its editable
+          GST-inclusive daily charge. All daily charges are charged once per
+          included day and allocated evenly across its displayed half-hours. GST is
+          applied only to spot add-ons marked + GST; base spot and tariff rates are
+          unchanged.
         </p>
         <span>
           Spot source: {spotDataset.meta.pointOfConnection} · through{" "}

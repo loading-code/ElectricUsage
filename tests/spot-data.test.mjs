@@ -84,9 +84,16 @@ test("default tariff and spot models produce valid comparable totals", () => {
     offpeakUsage * 0.0251 * gst +
     spotEnergyCost * 0.0541;
   const spotCost = spotEnergyCost + spotAddOns;
+  const tariffEnergyCost = tariffCost;
+  tariffCost += includedDays.size * 2.7544;
 
   assert.ok(matchedIntervals > 1_300);
   assert.ok(Number.isFinite(tariffCost) && tariffCost > 0);
+  assert.ok(
+    Math.abs(
+      tariffCost - tariffEnergyCost - includedDays.size * 2.7544,
+    ) < 1e-9,
+  );
   assert.ok(Number.isFinite(spotCost) && spotCost > 0);
   assert.ok(spotCost > spotEnergyCost);
 });

@@ -543,6 +543,7 @@ export default function Home() {
     peak: 39.92,
     offpeak: 26.12,
   });
+  const [tariffDailyCharge, setTariffDailyCharge] = useState(2.7544);
   const [spotCharges, setSpotCharges] = useState<SpotChargeSettings>(
     DEFAULT_SPOT_CHARGES,
   );
@@ -584,37 +585,8 @@ export default function Home() {
     initialised.current = true;
   }, [dataset]);
 
-  useEffect(() => {
-    const start = inputDateToTimestamp(startDate);
-    const end = inputDateToTimestamp(endDate) + DAY_MS;
-    const daySpan = Math.max(1, Math.round((end - start) / DAY_MS));
-    if (resolution === "hourly" && daySpan > 7) setResolution("auto");
-  }, [endDate, resolution, startDate]);
-
   const coverageStart = dataset ? Date.parse(dataset.meta.firstDate) : 0;
   const coverageEnd = dataset ? Date.parse(dataset.meta.lastDate) : 0;
-
-  useEffect(() => {
-    if (!dataset || !comparePreviousYear) return;
-    const previousStart = shiftUtcYear(inputDateToTimestamp(startDate), -1);
-    const previousEnd = shiftUtcYear(
-      inputDateToTimestamp(endDate) + DAY_MS,
-      -1,
-    );
-    if (
-      previousStart < coverageStart ||
-      previousEnd - INTERVAL_MS > coverageEnd
-    ) {
-      setComparePreviousYear(false);
-    }
-  }, [
-    comparePreviousYear,
-    coverageEnd,
-    coverageStart,
-    dataset,
-    endDate,
-    startDate,
-  ]);
 
   const setPreset = (id: string, dayCount?: number) => {
     if (!dataset) return;
@@ -685,7 +657,9 @@ export default function Home() {
       1,
       Math.round((endTimestamp - startTimestamp) / DAY_MS),
     );
-    const activeResolution = resolveResolution(resolution, dateSpan);
+    const requestedResolution =
+      resolution === "hourly" && dateSpan > 7 ? "auto" : resolution;
+    const activeResolution = resolveResolution(requestedResolution, dateSpan);
     const buckets = new Map<number, SeriesPoint>();
     const dailyTotals = new Map<number, number>();
     const profile = Array.from({ length: 48 }, (_, index) => ({
@@ -819,11 +793,15 @@ export default function Home() {
 
     const comparisonTotal =
       previousTotals.controlled + previousTotals.peak + previousTotals.offpeak;
-    const comparisonCost =
+    const comparisonEnergyCost =
       (previousTotals.controlled * rates.controlled +
         previousTotals.peak * rates.peak +
         previousTotals.offpeak * rates.offpeak) /
       100;
+    const comparisonDailyChargeCost =
+      previousDays.size * tariffDailyCharge;
+    const comparisonCost =
+      comparisonEnergyCost + comparisonDailyChargeCost;
     const comparisonTrend = trendEntries.map(([key, currentPoint]) => {
       const bucket = previousBuckets.get(key);
       return (
@@ -849,20 +827,24 @@ export default function Home() {
       ([, a], [, b]) => b - a,
     )[0];
     const total = totals.controlled + totals.peak + totals.offpeak;
-    const cost =
+    const dayCount = includedDays.size;
+    const energyCost =
       (totals.controlled * rates.controlled +
         totals.peak * rates.peak +
         totals.offpeak * rates.offpeak) /
       100;
+    const dailyChargeCost = dayCount * tariffDailyCharge;
+    const cost = energyCost + dailyChargeCost;
     const uncontrolled = totals.peak + totals.offpeak;
     const peakShare = uncontrolled ? (totals.peak / uncontrolled) * 100 : 0;
     const controlledShare = total ? (totals.controlled / total) * 100 : 0;
-    const dayCount = includedDays.size;
 
     return {
       totals,
       total,
       cost,
+      energyCost,
+      dailyChargeCost,
       dayCount,
       averageDaily: dayCount ? total / dayCount : 0,
       maximumInterval,
@@ -885,6 +867,8 @@ export default function Home() {
               totals: previousTotals,
               total: comparisonTotal,
               cost: comparisonCost,
+              energyCost: comparisonEnergyCost,
+              dailyChargeCost: comparisonDailyChargeCost,
               dayCount: previousDays.size,
               averageDaily: previousDays.size
                 ? comparisonTotal / previousDays.size
@@ -905,6 +889,7 @@ export default function Home() {
     endMinute,
     enabled,
     rates,
+    tariffDailyCharge,
     resolution,
     comparePreviousYear,
     coverageEnd,
@@ -1009,6 +994,7 @@ export default function Home() {
                   peak: 39.92,
                   offpeak: 26.12,
                 });
+                setTariffDailyCharge(2.7544);
                 setSpotCharges(DEFAULT_SPOT_CHARGES);
                 setComparePreviousYear(false);
               }}
@@ -1125,6 +1111,30 @@ export default function Home() {
                   </span>
                 </label>
               ))}
+              <label>
+                <span>
+                  <i style={{ background: "#163332" }} />
+                  Daily charge
+                </span>
+                <span className="rate-input">
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.0001"
+                    value={tariffDailyCharge}
+                    onChange={(event) =>
+                      setTariffDailyCharge(
+                        Math.max(0, Number(event.target.value)),
+                      )
+                    }
+                    aria-label="Standard tariff daily charge in dollars including GST"
+                  />
+                  $/day
+                </span>
+              </label>
+              <small className="daily-charge-note">
+                Daily charge includes GST and applies once per included day.
+              </small>
             </div>
           </details>
 
@@ -1213,9 +1223,13 @@ export default function Home() {
                 <button
                   type="button"
                   className={`compare-toggle ${
-                    comparePreviousYear ? "compare-toggle-active" : ""
+                    comparePreviousYear && analysis.comparisonAvailable
+                      ? "compare-toggle-active"
+                      : ""
                   }`}
-                  aria-pressed={comparePreviousYear}
+                  aria-pressed={
+                    comparePreviousYear && analysis.comparisonAvailable
+                  }
                   disabled={!analysis.comparisonAvailable}
                   title={
                     analysis.comparisonAvailable
@@ -1272,11 +1286,14 @@ export default function Home() {
             </article>
             <article className="kpi-card">
               <div className="kpi-topline">
-                <span>Estimated energy cost</span>
+                <span>Estimated tariff cost</span>
                 <span className="kpi-icon">$</span>
               </div>
               <strong>{formatMoney(analysis.cost)}</strong>
-              <small>Based on the editable unit rates</small>
+              <small className="kpi-cost-breakdown">
+                {formatMoney(analysis.energyCost)} usage +{" "}
+                {formatMoney(analysis.dailyChargeCost)} daily charges
+              </small>
             </article>
           </section>
 
@@ -1365,7 +1382,11 @@ export default function Home() {
               <label className="resolution-select">
                 Group by
                 <select
-                  value={resolution}
+                  value={
+                    resolution === "hourly" && analysis.dateSpan > 7
+                      ? "auto"
+                      : resolution
+                  }
                   onChange={(event) =>
                     setResolution(event.target.value as Resolution)
                   }
@@ -1532,9 +1553,9 @@ export default function Home() {
 
           <footer>
             <p>
-              Classifications use each interval&apos;s start time. Costs cover
-              energy unit rates only and exclude daily charges, taxes and plan
-              discounts.
+              Classifications use each interval&apos;s start time. Tariff costs
+              include the editable GST-inclusive daily charge and exclude other
+              taxes and plan discounts.
             </p>
             <span>
               Source refreshed from {dataset.meta.source.replace(".csv", "")}
@@ -1551,6 +1572,7 @@ export default function Home() {
               endMinute={endMinute}
               enabled={enabled}
               rates={rates}
+              tariffDailyCharge={tariffDailyCharge}
               spotCharges={spotCharges}
               onSpotChargesChange={setSpotCharges}
               onResetSpotCharges={() =>

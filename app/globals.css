@@ -439,6 +439,13 @@ summary:focus-visible {
   gap: 7px;
 }
 
+.rate-fields .daily-charge-note {
+  display: block;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+  line-height: 1.45;
+}
+
 .rate-fields i,
 .chart-legend i,
 .mix-list i,
@@ -707,6 +714,13 @@ summary:focus-visible {
   line-height: 1.4;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.kpi-card > small.kpi-cost-breakdown {
+  overflow: visible;
+  line-height: 1.45;
+  text-overflow: clip;
+  white-space: normal;
 }
 
 .panel {
