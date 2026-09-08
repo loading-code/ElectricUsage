@@ -28,8 +28,13 @@ function isPeak(timestamp) {
 }
 
 test("processed spot prices are sorted, unique and finite", () => {
+  assert.equal(spot.meta.pointOfConnection, "WIL0331");
   assert.equal(spot.data.length, spot.meta.intervalCount);
   assert.ok(spot.data.length > 45_000);
+  assert.ok(
+    Date.parse(usage.meta.lastDate) - Date.parse(spot.meta.lastDate) <= dayMs,
+    "official final prices should reach the usage period or lag it by at most one day",
+  );
   let previousSlot = Number.NEGATIVE_INFINITY;
 
   for (const [slot, price] of spot.data) {

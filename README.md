@@ -14,7 +14,8 @@ An interactive dashboard for exploring controlled, peak, and off-peak electricit
 - The tariff model applies the editable controlled, peak, and off-peak unit rates.
 - The tariff model also applies an editable daily charge, defaulting to $2.7544
   per included day including GST.
-- The spot model applies the settled HAY2201 half-hour price to all selected usage.
+- The spot model applies the settled Wilton (`WIL0331`) half-hour price to all
+  selected usage with a matching final price.
 - Optional spot-plan metering, service, levy, network delivery, daily and loss
   charges can be edited or disabled independently.
 - The configured fee and delivery defaults are GST-exclusive; the dashboard
@@ -45,6 +46,9 @@ To refresh the processed usage and spot-price data after replacing either CSV:
 ```bash
 npm run data
 ```
+
+The stored Wilton prices come from the Electricity Authority's official
+[final energy prices dataset](https://www.ea.govt.nz/data-and-insights/datasets/wholesale/dispatch-and-pricing/final-energy-prices/).
 
 ## Deployment
 

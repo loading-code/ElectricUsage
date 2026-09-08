@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
 
 const DEFAULT_SOURCE_PATH =
-  "data/wellington_settled_spot_prices_since_2024.csv";
+  "data/wilton_settled_spot_prices_since_2024.csv";
 const DEFAULT_OUTPUT_PATH = "public/spot-price-data.json";
 const baseTimestamp = Date.UTC(2024, 0, 1);
 const intervalMs = 30 * 60 * 1000;

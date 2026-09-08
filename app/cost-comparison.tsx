@@ -1342,8 +1342,8 @@ export default function CostComparison({
 
       <footer className="cost-footer">
         <p>
-          Spot pricing applies the settled HAY2201 price to selected usage with a
-          matching half-hour price.
+          Spot pricing applies the settled {spotDataset.meta.pointOfConnection}
+          price to selected usage with a matching half-hour price.
           The tariff applies controlled, peak and off-peak rates plus its editable
           GST-inclusive daily charge. All daily charges are charged once per
           included day and allocated evenly across its displayed half-hours. GST is
