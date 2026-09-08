@@ -1060,6 +1060,32 @@ export default function CostComparison({
     );
   }
 
+  if (analysis.pricedIntervals === 0) {
+    const noEligibleUsage = analysis.eligibleIntervals === 0;
+    return (
+      <section className="panel cost-state">
+        <span className="state-mark">i</span>
+        <div>
+          <h2>
+            {noEligibleUsage
+              ? "No usage matches these filters"
+              : "No matching spot prices for these dates"}
+          </h2>
+          {noEligibleUsage ? (
+            <p>Adjust the date, day or time filters to include usage intervals.</p>
+          ) : (
+            <p>
+              Usage is available for the selected period, but the supplied
+              spot-price data currently ends on{" "}
+              {dateFormat.format(Date.parse(spotDataset.meta.lastDate))}. Choose an
+              earlier date range to compare the two cost models.
+            </p>
+          )}
+        </div>
+      </section>
+    );
+  }
+
   const spotIsCheaper = analysis.spotCost < analysis.tariffCost;
   const winner = spotIsCheaper ? "Spot pricing" : "Peak / off-peak tariff";
   const saving = Math.abs(analysis.difference);
@@ -1072,8 +1098,8 @@ export default function CostComparison({
           <span className="eyebrow">Full spot-plan cost comparison</span>
           <h1>Which pricing model costs less?</h1>
           <p>
-            Every selected half-hour is priced once with your tariff rates and once
-            with the settled Wellington spot price, enabled fees, network delivery
+            Every selected half-hour with a matching settled Wellington spot price
+            is priced once with each model, including enabled fees, network delivery
             and losses.
           </p>
         </div>
@@ -1113,7 +1139,7 @@ export default function CostComparison({
           <strong className={spotIsCheaper ? "change-down" : "change-up"}>
             {money.format(saving)}
           </strong>
-          <small>{winner} is cheaper for the selected usage</small>
+          <small>{winner} is cheaper for the matched usage</small>
         </article>
         <article className="kpi-card">
           <div className="kpi-topline">
@@ -1316,7 +1342,8 @@ export default function CostComparison({
 
       <footer className="cost-footer">
         <p>
-          Spot pricing applies the settled HAY2201 price to all selected usage.
+          Spot pricing applies the settled HAY2201 price to selected usage with a
+          matching half-hour price.
           The tariff applies controlled, peak and off-peak rates plus its editable
           GST-inclusive daily charge. All daily charges are charged once per
           included day and allocated evenly across its displayed half-hours. GST is

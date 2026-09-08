@@ -39,15 +39,24 @@ test("processed spot prices are sorted, unique and finite", () => {
   }
 });
 
-test("spot prices cover essentially all published usage intervals", () => {
+test("spot prices cover essentially all usage intervals in the shared date range", () => {
   const prices = new Set(spot.data.map(([slot]) => slot));
-  const matched = usage.data.filter(([slot]) => prices.has(slot)).length;
-  assert.ok(matched / usage.data.length > 0.999);
+  const sharedStart = Math.max(usage.data[0][0], spot.data[0][0]);
+  const sharedEnd = Math.min(usage.data.at(-1)[0], spot.data.at(-1)[0]);
+  const comparableUsage = usage.data.filter(
+    ([slot]) => slot >= sharedStart && slot <= sharedEnd,
+  );
+  const matched = comparableUsage.filter(([slot]) => prices.has(slot)).length;
+  assert.ok(comparableUsage.length > 0);
+  assert.ok(matched / comparableUsage.length > 0.999);
 });
 
 test("default tariff and spot models produce valid comparable totals", () => {
   const prices = new Map(spot.data);
-  const lastTimestamp = Date.parse(usage.meta.lastDate);
+  const lastTimestamp = Math.min(
+    Date.parse(usage.meta.lastDate),
+    Date.parse(spot.meta.lastDate),
+  );
   const startTimestamp = lastTimestamp - 29 * dayMs;
   let tariffCost = 0;
   let spotEnergyCost = 0;
