@@ -13,8 +13,15 @@ An interactive dashboard for exploring controlled, peak, and off-peak electricit
 
 - The tariff model applies the editable controlled, peak, and off-peak unit rates.
 - The spot model applies the settled HAY2201 half-hour price to all selected usage.
+- Optional spot-plan metering, service, levy, network delivery, daily and loss
+  charges can be edited or disabled independently.
+- The configured fee and delivery defaults are GST-exclusive; the dashboard
+  applies 15% GST to lines marked `+ GST`.
+- Network losses add the configured percentage to each interval's spot-energy
+  component.
 - Both models are compared only where a meter reading and spot price overlap.
-- Costs cover energy only and exclude daily charges, retailer margins, taxes, hedging and plan discounts.
+- Costs exclude any retailer margin, tax, hedge or discount not represented by
+  the configurable spot-plan inputs.
 
 ## Local development
 

@@ -50,8 +50,13 @@ test("default tariff and spot models produce valid comparable totals", () => {
   const lastTimestamp = Date.parse(usage.meta.lastDate);
   const startTimestamp = lastTimestamp - 29 * dayMs;
   let tariffCost = 0;
-  let spotCost = 0;
+  let spotEnergyCost = 0;
+  let totalUsage = 0;
+  let controlledUsage = 0;
+  let peakUsage = 0;
+  let offpeakUsage = 0;
   let matchedIntervals = 0;
+  const includedDays = new Set();
 
   for (const [slot, controlled, uncontrolled] of usage.data) {
     const timestamp = baseTimestamp + slot * intervalMs;
@@ -61,11 +66,27 @@ test("default tariff and spot models produce valid comparable totals", () => {
     const uncontrolledRate = isPeak(timestamp) ? 39.92 : 26.12;
     tariffCost +=
       (controlled * 28.49 + uncontrolled * uncontrolledRate) / 100;
-    spotCost += ((controlled + uncontrolled) * spotRate) / 100;
+    spotEnergyCost += ((controlled + uncontrolled) * spotRate) / 100;
+    totalUsage += controlled + uncontrolled;
+    controlledUsage += controlled;
+    if (isPeak(timestamp)) peakUsage += uncontrolled;
+    else offpeakUsage += uncontrolled;
+    includedDays.add(new Date(timestamp).toISOString().slice(0, 10));
     matchedIntervals += 1;
   }
+
+  const gst = 1.15;
+  const spotAddOns =
+    includedDays.size * (0.43 + 0.5 + 1.5951) * gst +
+    totalUsage * (0.0025 + 0.02) * gst +
+    controlledUsage * 0.0325 * gst +
+    peakUsage * 0.1451 * gst +
+    offpeakUsage * 0.0251 * gst +
+    spotEnergyCost * 0.0541;
+  const spotCost = spotEnergyCost + spotAddOns;
 
   assert.ok(matchedIntervals > 1_300);
   assert.ok(Number.isFinite(tariffCost) && tariffCost > 0);
   assert.ok(Number.isFinite(spotCost) && spotCost > 0);
+  assert.ok(spotCost > spotEnergyCost);
 });

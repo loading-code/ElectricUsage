@@ -14,6 +14,106 @@ type Resolution = "auto" | "hourly" | "daily" | "weekly" | "monthly";
 type IntervalRow = [number, number, number];
 type SpotRow = [number, number];
 
+export type SpotChargeKey =
+  | "meteringDaily"
+  | "serviceDaily"
+  | "regulatoryLevy"
+  | "serviceUnit"
+  | "networkOffpeak"
+  | "networkPeak"
+  | "networkControlled"
+  | "networkDaily"
+  | "networkLosses";
+
+export type SpotChargeSettings = Record<
+  SpotChargeKey,
+  { enabled: boolean; value: number }
+>;
+
+export const DEFAULT_SPOT_CHARGES: SpotChargeSettings = {
+  meteringDaily: { enabled: true, value: 0.43 },
+  serviceDaily: { enabled: true, value: 0.5 },
+  regulatoryLevy: { enabled: true, value: 0.0025 },
+  serviceUnit: { enabled: true, value: 0.02 },
+  networkOffpeak: { enabled: true, value: 0.0251 },
+  networkPeak: { enabled: true, value: 0.1451 },
+  networkControlled: { enabled: true, value: 0.0325 },
+  networkDaily: { enabled: true, value: 1.5951 },
+  networkLosses: { enabled: true, value: 5.41 },
+};
+
+const SPOT_CHARGE_META: Record<
+  SpotChargeKey,
+  { label: string; basis: string; unit: string; step: string; gst: boolean }
+> = {
+  meteringDaily: {
+    label: "Metering fee",
+    basis: "Per included day",
+    unit: "$/day",
+    step: "0.01",
+    gst: true,
+  },
+  serviceDaily: {
+    label: "Service fee (daily)",
+    basis: "Per included day",
+    unit: "$/day",
+    step: "0.01",
+    gst: true,
+  },
+  regulatoryLevy: {
+    label: "Regulatory levies",
+    basis: "All selected usage",
+    unit: "$/kWh",
+    step: "0.0001",
+    gst: true,
+  },
+  serviceUnit: {
+    label: "Service fee (unit)",
+    basis: "All selected usage",
+    unit: "$/kWh",
+    step: "0.001",
+    gst: true,
+  },
+  networkOffpeak: {
+    label: "Network delivery — off-peak",
+    basis: "Off-peak uncontrolled usage",
+    unit: "$/kWh",
+    step: "0.0001",
+    gst: true,
+  },
+  networkPeak: {
+    label: "Network delivery — peak",
+    basis: "Peak uncontrolled usage",
+    unit: "$/kWh",
+    step: "0.0001",
+    gst: true,
+  },
+  networkControlled: {
+    label: "Network delivery — controlled",
+    basis: "All controlled-meter usage",
+    unit: "$/kWh",
+    step: "0.0001",
+    gst: true,
+  },
+  networkDaily: {
+    label: "Network delivery — daily charge",
+    basis: "Per included day",
+    unit: "$/day",
+    step: "0.0001",
+    gst: true,
+  },
+  networkLosses: {
+    label: "Network losses",
+    basis: "Extra spot energy on all usage",
+    unit: "%",
+    step: "0.01",
+    gst: false,
+  },
+};
+
+const spotChargeKeys = Object.keys(SPOT_CHARGE_META) as SpotChargeKey[];
+const GST_MULTIPLIER = 1.15;
+
 type UsageDataset = {
   data: IntervalRow[];
 };
@@ -41,6 +141,8 @@ type CostRow = {
   tariffRate: number;
   spotRate: number;
   tariffCost: number;
+  spotEnergyCost: number;
+  chargeCosts: Record<SpotChargeKey, number>;
   spotCost: number;
 };
 
@@ -60,6 +162,9 @@ type CostComparisonProps = {
   endMinute: number;
   enabled: Record<CategoryKey, boolean>;
   rates: Record<CategoryKey, number>;
+  spotCharges: SpotChargeSettings;
+  onSpotChargesChange: (settings: SpotChargeSettings) => void;
+  onResetSpotCharges: () => void;
   resolution: Resolution;
   onResolutionChange: (resolution: Resolution) => void;
 };
@@ -235,11 +340,19 @@ function selectedValues(
   };
 }
 
+function emptyChargeCosts() {
+  return Object.fromEntries(
+    spotChargeKeys.map((key) => [key, 0]),
+  ) as Record<SpotChargeKey, number>;
+}
+
 function createCostRow(
   row: IntervalRow,
   spotRate: number,
   enabled: Record<CategoryKey, boolean>,
   rates: Record<CategoryKey, number>,
+  spotCharges: SpotChargeSettings,
+  dailyDivisor = 0,
 ): CostRow {
   const [slot, controlled, uncontrolled] = row;
   const timestamp = BASE_TIMESTAMP + slot * INTERVAL_MS;
@@ -254,7 +367,56 @@ function createCostRow(
     (selected.controlled * rates.controlled +
       selected.uncontrolled * uncontrolledRate) /
     100;
-  const spotCost = (selected.usage * spotRate) / 100;
+  const spotEnergyCost = (selected.usage * spotRate) / 100;
+  const chargeCosts = emptyChargeCosts();
+  const withGst = (key: SpotChargeKey, amount: number) =>
+    spotCharges[key].enabled
+      ? amount * (SPOT_CHARGE_META[key].gst ? GST_MULTIPLIER : 1)
+      : 0;
+
+  chargeCosts.regulatoryLevy = withGst(
+    "regulatoryLevy",
+    selected.usage * spotCharges.regulatoryLevy.value,
+  );
+  chargeCosts.serviceUnit = withGst(
+    "serviceUnit",
+    selected.usage * spotCharges.serviceUnit.value,
+  );
+  chargeCosts.networkControlled = withGst(
+    "networkControlled",
+    selected.controlled * spotCharges.networkControlled.value,
+  );
+  chargeCosts.networkPeak = withGst(
+    "networkPeak",
+    (selected.peak ? selected.uncontrolled : 0) * spotCharges.networkPeak.value,
+  );
+  chargeCosts.networkOffpeak = withGst(
+    "networkOffpeak",
+    (!selected.peak ? selected.uncontrolled : 0) *
+      spotCharges.networkOffpeak.value,
+  );
+  chargeCosts.networkLosses = spotCharges.networkLosses.enabled
+    ? spotEnergyCost * (spotCharges.networkLosses.value / 100)
+    : 0;
+
+  if (dailyDivisor > 0) {
+    chargeCosts.meteringDaily = withGst(
+      "meteringDaily",
+      spotCharges.meteringDaily.value / dailyDivisor,
+    );
+    chargeCosts.serviceDaily = withGst(
+      "serviceDaily",
+      spotCharges.serviceDaily.value / dailyDivisor,
+    );
+    chargeCosts.networkDaily = withGst(
+      "networkDaily",
+      spotCharges.networkDaily.value / dailyDivisor,
+    );
+  }
+
+  const spotCost =
+    spotEnergyCost +
+    spotChargeKeys.reduce((total, key) => total + chargeCosts[key], 0);
   const labels = [];
   if (selected.controlled > 0) labels.push("Controlled");
   if (selected.uncontrolled > 0) {
@@ -274,6 +436,8 @@ function createCostRow(
         : uncontrolledRate,
     spotRate,
     tariffCost,
+    spotEnergyCost,
+    chargeCosts,
     spotCost,
   };
 }
@@ -469,7 +633,7 @@ function IntervalRanking({
     <section className="panel interval-ranking">
       <span className="eyebrow">{eyebrow}</span>
       <h3>{title}</h3>
-      <p>Ranked by actual spot-priced cost after all filters.</p>
+      <p>Ranked by spot total after filters and allocated daily charges.</p>
       <div className="cost-table-wrap">
         <table className="cost-table compact-cost-table">
           <thead>
@@ -478,7 +642,7 @@ function IntervalRanking({
               <th className="numeric">Usage</th>
               <th className="numeric">Spot rate</th>
               <th className="numeric">Tariff</th>
-              <th className="numeric">Spot</th>
+              <th className="numeric">Spot total</th>
               <th className="numeric">Difference</th>
             </tr>
           </thead>
@@ -509,6 +673,119 @@ function IntervalRanking({
   );
 }
 
+function SpotChargeControls({
+  settings,
+  totals,
+  spotEnergyCost,
+  onChange,
+  onReset,
+}: {
+  settings: SpotChargeSettings;
+  totals: Record<SpotChargeKey, number>;
+  spotEnergyCost: number;
+  onChange: (settings: SpotChargeSettings) => void;
+  onReset: () => void;
+}) {
+  const enabledChargeTotal = spotChargeKeys.reduce(
+    (total, key) => total + totals[key],
+    0,
+  );
+
+  return (
+    <section className="panel spot-charge-panel">
+      <div className="charge-panel-heading">
+        <div>
+          <span className="eyebrow">Spot-plan inputs</span>
+          <h2>Fees, delivery and losses</h2>
+          <p>
+            Toggle any line on or off and edit its rate. Dollar inputs marked
+            + GST have 15% added in the calculation.
+          </p>
+        </div>
+        <button type="button" className="charge-reset" onClick={onReset}>
+          Restore defaults
+        </button>
+      </div>
+
+      <div className="charge-control-grid">
+        {spotChargeKeys.map((key) => {
+          const meta = SPOT_CHARGE_META[key];
+          const setting = settings[key];
+          return (
+            <article
+              className={`charge-control ${
+                setting.enabled ? "charge-control-enabled" : ""
+              }`}
+              key={key}
+            >
+              <button
+                type="button"
+                className="charge-switch"
+                aria-pressed={setting.enabled}
+                aria-label={`${setting.enabled ? "Disable" : "Enable"} ${meta.label}`}
+                onClick={() =>
+                  onChange({
+                    ...settings,
+                    [key]: { ...setting, enabled: !setting.enabled },
+                  })
+                }
+              >
+                <span>{setting.enabled ? "✓" : ""}</span>
+              </button>
+              <div className="charge-control-copy">
+                <strong>{meta.label}</strong>
+                <small>
+                  {meta.basis}{meta.gst ? " · + GST" : ""}
+                </small>
+              </div>
+              <label className="charge-value">
+                <span className="sr-only">{meta.label} rate</span>
+                <input
+                  type="number"
+                  min="0"
+                  step={meta.step}
+                  value={setting.value}
+                  disabled={!setting.enabled}
+                  onChange={(event) =>
+                    onChange({
+                      ...settings,
+                      [key]: {
+                        ...setting,
+                        value: Math.max(0, Number(event.target.value)),
+                      },
+                    })
+                  }
+                />
+                <span>{meta.unit}</span>
+              </label>
+              <b className="charge-contribution">
+                {setting.enabled ? money.format(totals[key]) : "Excluded"}
+              </b>
+            </article>
+          );
+        })}
+      </div>
+
+      <div className="spot-cost-reconciliation">
+        <span>
+          <small>Settled spot energy</small>
+          <strong>{money.format(spotEnergyCost)}</strong>
+        </span>
+        <i aria-hidden="true">+</i>
+        <span>
+          <small>Enabled fees and losses</small>
+          <strong>{money.format(enabledChargeTotal)}</strong>
+        </span>
+        <i aria-hidden="true">=</i>
+        <span className="reconciliation-total">
+          <small>Spot model total</small>
+          <strong>{money.format(spotEnergyCost + enabledChargeTotal)}</strong>
+        </span>
+      </div>
+    </section>
+  );
+}
+
 export default function CostComparison({
   dataset,
   startDate,
@@ -518,6 +795,9 @@ export default function CostComparison({
   endMinute,
   enabled,
   rates,
+  spotCharges,
+  onSpotChargesChange,
+  onResetSpotCharges,
   resolution,
   onResolutionChange,
 }: CostComparisonProps) {
@@ -549,7 +829,7 @@ export default function CostComparison({
     const usageMap = new Map<number, IntervalRow>(
       dataset.data.map((row) => [row[0], row]),
     );
-    const rows: CostRow[] = [];
+    const matchedRows: { row: IntervalRow; spotRate: number }[] = [];
     let eligibleIntervals = 0;
 
     dataset.data.forEach((row) => {
@@ -560,7 +840,29 @@ export default function CostComparison({
       eligibleIntervals += 1;
       const spotRate = priceMap.get(row[0]);
       if (spotRate === undefined) return;
-      rows.push(createCostRow(row, spotRate, enabled, rates));
+      matchedRows.push({ row, spotRate });
+    });
+
+    const dailyIntervalCounts = new Map<number, number>();
+    matchedRows.forEach(({ row }) => {
+      const timestamp = BASE_TIMESTAMP + row[0] * INTERVAL_MS;
+      const dayStart = startOfBucket(timestamp, "daily");
+      dailyIntervalCounts.set(
+        dayStart,
+        (dailyIntervalCounts.get(dayStart) ?? 0) + 1,
+      );
+    });
+    const rows = matchedRows.map(({ row, spotRate }) => {
+      const timestamp = BASE_TIMESTAMP + row[0] * INTERVAL_MS;
+      const dayStart = startOfBucket(timestamp, "daily");
+      return createCostRow(
+        row,
+        spotRate,
+        enabled,
+        rates,
+        spotCharges,
+        dailyIntervalCounts.get(dayStart) ?? 0,
+      );
     });
 
     const buckets = new Map<number, CostPoint>();
@@ -581,6 +883,16 @@ export default function CostComparison({
     });
 
     const tariffCost = rows.reduce((total, row) => total + row.tariffCost, 0);
+    const spotEnergyCost = rows.reduce(
+      (total, row) => total + row.spotEnergyCost,
+      0,
+    );
+    const chargeTotals = Object.fromEntries(
+      spotChargeKeys.map((key) => [
+        key,
+        rows.reduce((total, row) => total + row.chargeCosts[key], 0),
+      ]),
+    ) as Record<SpotChargeKey, number>;
     const spotCost = rows.reduce((total, row) => total + row.spotCost, 0);
     const totalUsage = rows.reduce((total, row) => total + row.usage, 0);
     const ranked = rows.filter((row) => row.usage > 0);
@@ -599,6 +911,8 @@ export default function CostComparison({
       priceMap,
       usageMap,
       tariffCost,
+      spotEnergyCost,
+      chargeTotals,
       spotCost,
       difference: spotCost - tariffCost,
       totalUsage,
@@ -624,6 +938,7 @@ export default function CostComparison({
     endMinute,
     enabled,
     rates,
+    spotCharges,
     resolution,
   ]);
 
@@ -641,25 +956,46 @@ export default function CostComparison({
   const dayRows = useMemo(() => {
     if (!analysis || !selectedDay) return [];
     const dayStart = inputDateToTimestamp(selectedDay);
-    return Array.from({ length: 48 }, (_, index) => {
+    const candidates = Array.from({ length: 48 }, (_, index) => {
       const timestamp = dayStart + index * INTERVAL_MS;
       const slot = Math.round((timestamp - BASE_TIMESTAMP) / INTERVAL_MS);
       const usageRow = analysis.usageMap.get(slot) ?? ([slot, 0, 0] as IntervalRow);
       const price = analysis.priceMap.get(slot);
+      return { usageRow, price };
+    });
+    const pricedIntervalCount = candidates.filter(
+      ({ price }) => price !== undefined,
+    ).length;
+
+    return candidates.map(({ usageRow, price }) => {
       return price === undefined
         ? {
-            ...createCostRow(usageRow, 0, enabled, rates),
+            ...createCostRow(usageRow, 0, enabled, rates, spotCharges),
             spotRate: Number.NaN,
+            spotEnergyCost: Number.NaN,
+            chargeCosts: emptyChargeCosts(),
             spotCost: Number.NaN,
           }
-        : createCostRow(usageRow, price, enabled, rates);
+        : createCostRow(
+            usageRow,
+            price,
+            enabled,
+            rates,
+            spotCharges,
+            pricedIntervalCount,
+          );
     });
-  }, [analysis, selectedDay, enabled, rates]);
+  }, [analysis, selectedDay, enabled, rates, spotCharges]);
 
   const dayTotals = useMemo(
     () => ({
       usage: dayRows.reduce((total, row) => total + row.usage, 0),
       tariff: dayRows.reduce((total, row) => total + row.tariffCost, 0),
+      spotEnergy: dayRows.reduce(
+        (total, row) =>
+          total + (Number.isFinite(row.spotEnergyCost) ? row.spotEnergyCost : 0),
+        0,
+      ),
       spot: dayRows.reduce(
         (total, row) => total + (Number.isFinite(row.spotCost) ? row.spotCost : 0),
         0,
@@ -701,11 +1037,12 @@ export default function CostComparison({
     <div className="cost-comparison-view">
       <section className="cost-hero panel">
         <div>
-          <span className="eyebrow">Energy-only model comparison</span>
+          <span className="eyebrow">Full spot-plan cost comparison</span>
           <h1>Which pricing model costs less?</h1>
           <p>
             Every selected half-hour is priced once with your tariff rates and once
-            with the settled Wellington spot price.
+            with the settled Wellington spot price, enabled fees, network delivery
+            and losses.
           </p>
         </div>
         <div className={`winner-card ${spotIsCheaper ? "winner-spot" : "winner-tariff"}`}>
@@ -754,6 +1091,14 @@ export default function CostComparison({
           </small>
         </article>
       </section>
+
+      <SpotChargeControls
+        settings={spotCharges}
+        totals={analysis.chargeTotals}
+        spotEnergyCost={analysis.spotEnergyCost}
+        onChange={onSpotChargesChange}
+        onReset={onResetSpotCharges}
+      />
 
       <section className="panel trend-panel cost-trend-panel">
         <div className="panel-heading">
@@ -856,7 +1201,9 @@ export default function CostComparison({
                 <th className="numeric">Tariff rate</th>
                 <th className="numeric">Spot rate</th>
                 <th className="numeric">Tariff cost</th>
-                <th className="numeric">Spot cost</th>
+                <th className="numeric">Spot energy</th>
+                <th className="numeric">Add-ons</th>
+                <th className="numeric">Spot total</th>
                 <th className="numeric">Difference</th>
               </tr>
             </thead>
@@ -872,6 +1219,16 @@ export default function CostComparison({
                     {Number.isFinite(row.spotRate) ? `${decimal.format(row.spotRate)}c` : "—"}
                   </td>
                   <td className="numeric">{intervalMoney.format(row.tariffCost)}</td>
+                  <td className="numeric">
+                    {Number.isFinite(row.spotEnergyCost)
+                      ? intervalMoney.format(row.spotEnergyCost)
+                      : "—"}
+                  </td>
+                  <td className="numeric">
+                    {Number.isFinite(row.spotCost)
+                      ? intervalMoney.format(row.spotCost - row.spotEnergyCost)
+                      : "—"}
+                  </td>
                   <td className="numeric">
                     {Number.isFinite(row.spotCost) ? intervalMoney.format(row.spotCost) : "—"}
                   </td>
@@ -910,7 +1267,9 @@ export default function CostComparison({
         <p>
           Spot pricing applies the settled HAY2201 price to all selected usage.
           The tariff applies controlled, peak and off-peak rates separately.
-          Both exclude daily charges, retailer margins, taxes, hedging and discounts.
+          Enabled daily fees are charged once per included day and allocated evenly
+          across its displayed half-hours. GST is applied only to add-ons marked
+          + GST; base spot and tariff rates are unchanged.
         </p>
         <span>
           Spot source: {spotDataset.meta.pointOfConnection} · through{" "}

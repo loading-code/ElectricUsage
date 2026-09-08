@@ -1281,6 +1281,199 @@ footer span {
   background: #fff9e9;
 }
 
+.spot-charge-panel {
+  padding: 22px;
+}
+
+.charge-panel-heading {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.charge-panel-heading h2 {
+  margin: 4px 0;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 24px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+}
+
+.charge-panel-heading p {
+  max-width: 690px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.charge-reset {
+  flex: 0 0 auto;
+  padding: 7px 9px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 800;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.charge-control-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
+  margin-top: 18px;
+}
+
+.charge-control {
+  display: grid;
+  grid-template-columns: 25px minmax(0, 1fr) auto;
+  gap: 8px 9px;
+  align-items: center;
+  min-width: 0;
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: #f7f9f6;
+  opacity: 0.66;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease,
+    opacity 160ms ease;
+}
+
+.charge-control-enabled {
+  border-color: rgba(23, 107, 135, 0.28);
+  background: #f2f8f8;
+  opacity: 1;
+}
+
+.charge-switch {
+  display: grid;
+  width: 23px;
+  height: 23px;
+  place-items: center;
+  padding: 0;
+  border: 1.5px solid #9aa8a6;
+  border-radius: 6px;
+  background: white;
+  color: white;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.charge-control-enabled .charge-switch {
+  border-color: var(--teal);
+  background: var(--teal);
+}
+
+.charge-control-copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.charge-control-copy strong {
+  overflow: hidden;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.charge-control-copy small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.charge-contribution {
+  color: var(--teal);
+  font-size: 9px;
+}
+
+.charge-value {
+  display: flex;
+  grid-column: 2 / -1;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 8px;
+  font-weight: 800;
+}
+
+.charge-value input {
+  width: 88px;
+  padding: 6px 7px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: white;
+  color: var(--ink);
+  font-size: 10px;
+  font-weight: 700;
+  text-align: right;
+}
+
+.charge-value input:disabled {
+  background: #edf0ed;
+  color: #94a09e;
+}
+
+.spot-cost-reconciliation {
+  display: flex;
+  align-items: stretch;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 13px;
+  padding-top: 13px;
+  border-top: 1px solid var(--line);
+}
+
+.spot-cost-reconciliation > span {
+  display: grid;
+  min-width: 150px;
+  gap: 2px;
+  padding: 8px 11px;
+  border-radius: 9px;
+  background: #f4f6f2;
+}
+
+.spot-cost-reconciliation small {
+  color: var(--muted);
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.spot-cost-reconciliation strong {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 18px;
+  font-weight: 500;
+}
+
+.spot-cost-reconciliation > i {
+  align-self: center;
+  color: #889694;
+  font-family: Georgia, serif;
+  font-size: 17px;
+  font-style: normal;
+}
+
+.spot-cost-reconciliation .reconciliation-total {
+  background: var(--ink);
+  color: white;
+}
+
+.spot-cost-reconciliation .reconciliation-total small {
+  color: #b9cdca;
+}
+
 .cost-trend-panel,
 .day-drill-panel,
 .interval-ranking {
@@ -1562,6 +1755,10 @@ footer span {
   .interval-extremes-grid {
     grid-template-columns: 1fr;
   }
+
+  .charge-control-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 860px) {
@@ -1729,8 +1926,33 @@ footer span {
 
   .cost-trend-panel,
   .day-drill-panel,
-  .interval-ranking {
+  .interval-ranking,
+  .spot-charge-panel {
     padding: 17px;
+  }
+
+  .charge-panel-heading {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .charge-reset {
+    align-self: start;
+    padding-left: 0;
+  }
+
+  .charge-control-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .spot-cost-reconciliation {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .spot-cost-reconciliation > i {
+    display: none;
   }
 
   .day-drill-heading {

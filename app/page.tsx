@@ -7,7 +7,10 @@ import {
   useState,
   type MouseEvent as ReactMouseEvent,
 } from "react";
-import CostComparison from "./cost-comparison";
+import CostComparison, {
+  DEFAULT_SPOT_CHARGES,
+  type SpotChargeSettings,
+} from "./cost-comparison";
 
 type CategoryKey = "controlled" | "peak" | "offpeak";
 type DayType = "all" | "weekdays" | "weekends";
@@ -540,6 +543,9 @@ export default function Home() {
     peak: 39.92,
     offpeak: 26.12,
   });
+  const [spotCharges, setSpotCharges] = useState<SpotChargeSettings>(
+    DEFAULT_SPOT_CHARGES,
+  );
   const initialised = useRef(false);
 
   useEffect(() => {
@@ -1003,6 +1009,7 @@ export default function Home() {
                   peak: 39.92,
                   offpeak: 26.12,
                 });
+                setSpotCharges(DEFAULT_SPOT_CHARGES);
                 setComparePreviousYear(false);
               }}
             >
@@ -1544,6 +1551,11 @@ export default function Home() {
               endMinute={endMinute}
               enabled={enabled}
               rates={rates}
+              spotCharges={spotCharges}
+              onSpotChargesChange={setSpotCharges}
+              onResetSpotCharges={() =>
+                setSpotCharges(DEFAULT_SPOT_CHARGES)
+              }
               resolution={resolution}
               onResolutionChange={setResolution}
             />
