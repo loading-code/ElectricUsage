@@ -15,6 +15,7 @@ import CostComparison, {
 type CategoryKey = "controlled" | "peak" | "offpeak";
 type DayType = "all" | "weekdays" | "weekends";
 type Resolution = "auto" | "hourly" | "daily" | "weekly" | "monthly";
+type HeatmapResolution = "half-hour" | "hourly" | "tariff";
 type DashboardView = "usage" | "cost";
 type IntervalRow = [number, number, number];
 
@@ -39,6 +40,20 @@ type SeriesPoint = {
   controlled: number;
   peak: number;
   offpeak: number;
+};
+
+type HeatmapColumn = {
+  key: string;
+  label: string;
+  timeLabel: string;
+  startMinute: number;
+  endMinute: number;
+};
+
+type HeatmapCell = {
+  current: number | null;
+  previous: number | null;
+  delta: number | null;
 };
 
 const BASE_TIMESTAMP = Date.UTC(2024, 0, 1);
@@ -71,6 +86,44 @@ const CATEGORY_META: Record<
 
 const categoryKeys: CategoryKey[] = ["controlled", "peak", "offpeak"];
 
+const HEATMAP_TARIFF_WINDOWS: HeatmapColumn[] = [
+  {
+    key: "overnight-offpeak",
+    label: "Off-peak",
+    timeLabel: "00:00–07:00",
+    startMinute: 0,
+    endMinute: 7 * 60,
+  },
+  {
+    key: "morning-peak",
+    label: "Morning peak window",
+    timeLabel: "07:00–11:00",
+    startMinute: 7 * 60,
+    endMinute: 11 * 60,
+  },
+  {
+    key: "daytime-offpeak",
+    label: "Off-peak",
+    timeLabel: "11:00–17:00",
+    startMinute: 11 * 60,
+    endMinute: 17 * 60,
+  },
+  {
+    key: "evening-peak",
+    label: "Evening peak window",
+    timeLabel: "17:00–21:00",
+    startMinute: 17 * 60,
+    endMinute: 21 * 60,
+  },
+  {
+    key: "late-offpeak",
+    label: "Off-peak",
+    timeLabel: "21:00–24:00",
+    startMinute: 21 * 60,
+    endMinute: 24 * 60,
+  },
+];
+
 const nzDate = new Intl.DateTimeFormat("en-NZ", {
   day: "numeric",
   month: "short",
@@ -94,6 +147,11 @@ const nzWeekday = new Intl.DateTimeFormat("en-NZ", {
   weekday: "short",
   day: "numeric",
   month: "short",
+  timeZone: "UTC",
+});
+
+const nzWeekdayOnly = new Intl.DateTimeFormat("en-NZ", {
+  weekday: "short",
   timeZone: "UTC",
 });
 
@@ -148,6 +206,86 @@ function formatMoney(value: number) {
 function formatTime(minutes: number) {
   if (minutes === 1440) return "24:00";
   return `${pad(Math.floor(minutes / 60))}:${pad(minutes % 60)}`;
+}
+
+function heatmapColumns(resolution: HeatmapResolution): HeatmapColumn[] {
+  if (resolution === "tariff") return HEATMAP_TARIFF_WINDOWS;
+
+  const intervalMinutes = resolution === "half-hour" ? 30 : 60;
+  return Array.from({ length: 1440 / intervalMinutes }, (_, index) => {
+    const startMinute = index * intervalMinutes;
+    const endMinute = startMinute + intervalMinutes;
+    return {
+      key: `${resolution}-${startMinute}`,
+      label: formatTime(startMinute),
+      timeLabel: `${formatTime(startMinute)}–${formatTime(endMinute)}`,
+      startMinute,
+      endMinute,
+    };
+  });
+}
+
+function heatmapColumnIndex(
+  timestamp: number,
+  resolution: HeatmapResolution,
+) {
+  const date = new Date(timestamp);
+  const minute = date.getUTCHours() * 60 + date.getUTCMinutes();
+  if (resolution === "half-hour") return Math.floor(minute / 30);
+  if (resolution === "hourly") return Math.floor(minute / 60);
+  return HEATMAP_TARIFF_WINDOWS.findIndex(
+    (window) => minute >= window.startMinute && minute < window.endMinute,
+  );
+}
+
+function selectedIntervalUsage(
+  timestamp: number,
+  controlled: number,
+  uncontrolled: number,
+  enabled: Record<CategoryKey, boolean>,
+) {
+  const controlledUsage = enabled.controlled ? controlled : 0;
+  const uncontrolledUsage = isPeakPeriod(timestamp)
+    ? enabled.peak
+      ? uncontrolled
+      : 0
+    : enabled.offpeak
+      ? uncontrolled
+      : 0;
+  return controlledUsage + uncontrolledUsage;
+}
+
+function formatHeatmapValue(value: number) {
+  return `${new Intl.NumberFormat("en-NZ", {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  }).format(value)} kWh`;
+}
+
+function heatmapCellStyle(
+  value: number,
+  maximum: number,
+  comparison: boolean,
+) {
+  const strength = maximum
+    ? Math.min(1, Math.pow(Math.abs(value) / maximum, 0.62))
+    : 0;
+
+  if (comparison) {
+    if (Math.abs(value) < 0.0005) {
+      return { backgroundColor: "#eef2f0", color: "#526765" };
+    }
+    const colour = value > 0 ? "240, 113, 91" : "23, 107, 135";
+    return {
+      backgroundColor: `rgba(${colour}, ${0.12 + strength * 0.82})`,
+      color: strength > 0.58 ? "#ffffff" : "#163332",
+    };
+  }
+
+  return {
+    backgroundColor: `rgba(23, 107, 135, ${0.08 + strength * 0.86})`,
+    color: strength > 0.58 ? "#ffffff" : "#163332",
+  };
 }
 
 function isPeakPeriod(timestamp: number) {
@@ -531,6 +669,9 @@ export default function Home() {
   const [startMinute, setStartMinute] = useState(0);
   const [endMinute, setEndMinute] = useState(1440);
   const [resolution, setResolution] = useState<Resolution>("auto");
+  const [heatmapResolution, setHeatmapResolution] =
+    useState<HeatmapResolution>("hourly");
+  const [heatmapMonth, setHeatmapMonth] = useState("");
   const [comparePreviousYear, setComparePreviousYear] = useState(false);
   const [activeView, setActiveView] = useState<DashboardView>("usage");
   const [enabled, setEnabled] = useState<Record<CategoryKey, boolean>>({
@@ -548,6 +689,7 @@ export default function Home() {
     DEFAULT_SPOT_CHARGES,
   );
   const initialised = useRef(false);
+  const heatmapScrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const syncViewFromHash = () => {
@@ -582,8 +724,13 @@ export default function Home() {
     const first = Date.parse(dataset.meta.firstDate);
     setEndDate(toInputDate(last));
     setStartDate(toInputDate(Math.max(first, last - 29 * DAY_MS)));
+    setHeatmapMonth(toInputDate(last).slice(0, 7));
     initialised.current = true;
   }, [dataset]);
+
+  useEffect(() => {
+    if (heatmapScrollRef.current) heatmapScrollRef.current.scrollLeft = 0;
+  }, [heatmapMonth, heatmapResolution]);
 
   const coverageStart = dataset ? Date.parse(dataset.meta.firstDate) : 0;
   const coverageEnd = dataset ? Date.parse(dataset.meta.lastDate) : 0;
@@ -896,6 +1043,105 @@ export default function Home() {
     coverageStart,
   ]);
 
+  const heatmap = useMemo(() => {
+    if (!dataset) return null;
+
+    const selectedMonth =
+      heatmapMonth || toInputDate(coverageEnd).slice(0, 7);
+    const [year, month] = selectedMonth.split("-").map(Number);
+    const monthStart = Date.UTC(year, month - 1, 1);
+    const monthEnd = Date.UTC(year, month, 1);
+    const previousMonthStart = Date.UTC(year - 1, month - 1, 1);
+    const previousMonthEnd = Date.UTC(year - 1, month, 1);
+    const daysInMonth = Math.round((monthEnd - monthStart) / DAY_MS);
+    const previousDaysInMonth = Math.round(
+      (previousMonthEnd - previousMonthStart) / DAY_MS,
+    );
+    const columns = heatmapColumns(heatmapResolution);
+    const makeMatrix = (days: number) =>
+      Array.from({ length: days }, () =>
+        Array.from({ length: columns.length }, () => ({
+          total: 0,
+          count: 0,
+        })),
+      );
+    const currentMatrix = makeMatrix(daysInMonth);
+    const previousMatrix = makeMatrix(previousDaysInMonth);
+
+    dataset.data.forEach(([slot, controlled, uncontrolled]) => {
+      const timestamp = BASE_TIMESTAMP + slot * INTERVAL_MS;
+      const inCurrentMonth = timestamp >= monthStart && timestamp < monthEnd;
+      const inPreviousMonth =
+        timestamp >= previousMonthStart && timestamp < previousMonthEnd;
+      if (!inCurrentMonth && !inPreviousMonth) return;
+
+      const columnIndex = heatmapColumnIndex(timestamp, heatmapResolution);
+      if (columnIndex < 0) return;
+      const dayIndex = new Date(timestamp).getUTCDate() - 1;
+      const target = inCurrentMonth ? currentMatrix : previousMatrix;
+      const cell = target[dayIndex]?.[columnIndex];
+      if (!cell) return;
+
+      cell.total += selectedIntervalUsage(
+        timestamp,
+        controlled,
+        uncontrolled,
+        enabled,
+      );
+      cell.count += 1;
+    });
+
+    let maximumUsage = 0;
+    let maximumDelta = 0;
+    let comparableCells = 0;
+    const rows = currentMatrix.map((day, dayIndex) => {
+      const timestamp = monthStart + dayIndex * DAY_MS;
+      const previousDay = previousMatrix[dayIndex];
+      const cells: HeatmapCell[] = day.map((cell, columnIndex) => {
+        const previousCell = previousDay?.[columnIndex];
+        const current = cell.count ? cell.total : null;
+        const previous = previousCell?.count ? previousCell.total : null;
+        const delta =
+          current !== null && previous !== null ? current - previous : null;
+        if (current !== null) maximumUsage = Math.max(maximumUsage, current);
+        if (delta !== null) {
+          comparableCells += 1;
+          maximumDelta = Math.max(maximumDelta, Math.abs(delta));
+        }
+        return { current, previous, delta };
+      });
+
+      return {
+        day: dayIndex + 1,
+        timestamp,
+        weekday: nzWeekdayOnly.format(timestamp),
+        weekend: [0, 6].includes(new Date(timestamp).getUTCDay()),
+        cells,
+      };
+    });
+
+    return {
+      selectedMonth,
+      monthLabel: new Intl.DateTimeFormat("en-NZ", {
+        month: "long",
+        year: "numeric",
+        timeZone: "UTC",
+      }).format(monthStart),
+      previousYear: year - 1,
+      columns,
+      rows,
+      maximumUsage,
+      maximumDelta,
+      comparisonAvailable: comparableCells > 0,
+    };
+  }, [
+    coverageEnd,
+    dataset,
+    enabled,
+    heatmapMonth,
+    heatmapResolution,
+  ]);
+
   const timeOptions = useMemo(
     () => Array.from({ length: 49 }, (_, index) => index * 30),
     [],
@@ -934,6 +1180,8 @@ export default function Home() {
   const controlledAngle = (analysis.totals.controlled / mixTotal) * 360;
   const peakAngle =
     controlledAngle + (analysis.totals.peak / mixTotal) * 360;
+  const previousYearAvailable =
+    analysis.comparisonAvailable || Boolean(heatmap?.comparisonAvailable);
 
   return (
     <main className="dashboard-shell">
@@ -997,6 +1245,8 @@ export default function Home() {
                 setTariffDailyCharge(2.7544);
                 setSpotCharges(DEFAULT_SPOT_CHARGES);
                 setComparePreviousYear(false);
+                setHeatmapResolution("hourly");
+                setHeatmapMonth(toInputDate(coverageEnd).slice(0, 7));
               }}
             >
               Reset
@@ -1223,18 +1473,14 @@ export default function Home() {
                 <button
                   type="button"
                   className={`compare-toggle ${
-                    comparePreviousYear && analysis.comparisonAvailable
-                      ? "compare-toggle-active"
-                      : ""
+                    comparePreviousYear ? "compare-toggle-active" : ""
                   }`}
-                  aria-pressed={
-                    comparePreviousYear && analysis.comparisonAvailable
-                  }
-                  disabled={!analysis.comparisonAvailable}
+                  aria-pressed={comparePreviousYear}
+                  disabled={!previousYearAvailable}
                   title={
-                    analysis.comparisonAvailable
-                      ? "Compare this date range with the same dates one year earlier"
-                      : "A complete previous-year range is not available"
+                    previousYearAvailable
+                      ? "Compare available views with the same dates one year earlier"
+                      : "Previous-year data is not available for this range or heat-map month"
                   }
                   onClick={() =>
                     setComparePreviousYear((current) => !current)
@@ -1428,6 +1674,217 @@ export default function Home() {
               ariaLabel={`Stacked ${analysis.activeResolution} electricity usage chart`}
             />
           </section>
+
+          {heatmap ? (
+            <section
+              className="panel heatmap-panel"
+              aria-label="Monthly usage heat map"
+            >
+              <div className="panel-heading heatmap-heading">
+                <div>
+                  <span className="eyebrow">Every day · every period</span>
+                  <h2>Monthly usage heat map</h2>
+                  <p>
+                    Selected usage types across the full day. Cell values are
+                    energy consumed in kWh.
+                  </p>
+                </div>
+                <div className="heatmap-controls">
+                  <label className="billing-period-select">
+                    Month
+                    <select
+                      value={heatmap.selectedMonth}
+                      onChange={(event) => setHeatmapMonth(event.target.value)}
+                    >
+                      {billingPeriods.map((period) => (
+                        <option value={period.value} key={period.value}>
+                          {period.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="resolution-select">
+                    Time periods
+                    <select
+                      value={heatmapResolution}
+                      onChange={(event) =>
+                        setHeatmapResolution(
+                          event.target.value as HeatmapResolution,
+                        )
+                      }
+                    >
+                      <option value="half-hour">30 minutes</option>
+                      <option value="hourly">1 hour</option>
+                      <option value="tariff">Peak / off-peak windows</option>
+                    </select>
+                  </label>
+                </div>
+              </div>
+
+              <div className="heatmap-meta">
+                <strong>{heatmap.monthLabel}</strong>
+                {comparePreviousYear ? (
+                  heatmap.comparisonAvailable ? (
+                    <span>
+                      Colour shows the change from {heatmap.previousYear}; each
+                      cell also retains the current total.
+                    </span>
+                  ) : (
+                    <span className="heatmap-unavailable">
+                      No matching {heatmap.previousYear} readings are available
+                      for this month.
+                    </span>
+                  )
+                ) : (
+                  <span>Darker cells indicate higher consumption.</span>
+                )}
+              </div>
+
+              <div
+                className="heatmap-scroll"
+                ref={heatmapScrollRef}
+                tabIndex={0}
+              >
+                <table
+                  className={`heatmap-table heatmap-${heatmapResolution}`}
+                >
+                  <thead>
+                    <tr>
+                      <th className="heatmap-corner" scope="col">
+                        Day
+                      </th>
+                      {heatmap.columns.map((column) => (
+                        <th
+                          key={column.key}
+                          scope="col"
+                          title={column.timeLabel}
+                        >
+                          <span>{column.label}</span>
+                          {heatmapResolution === "tariff" ? (
+                            <small>{column.timeLabel}</small>
+                          ) : null}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {heatmap.rows.map((row) => (
+                      <tr
+                        key={row.day}
+                        className={row.weekend ? "heatmap-weekend" : ""}
+                      >
+                        <th className="heatmap-day" scope="row">
+                          <strong>{row.day}</strong>
+                          <span>{row.weekday}</span>
+                        </th>
+                        {row.cells.map((cell, columnIndex) => {
+                          const column = heatmap.columns[columnIndex];
+                          const deltaLabel =
+                            cell.delta === null
+                              ? ""
+                              : `${cell.delta > 0 ? "+" : ""}${numberFormatter.format(cell.delta)}`;
+                          const title =
+                            cell.current === null
+                              ? `${nzDate.format(row.timestamp)}, ${column.timeLabel}: no reading`
+                              : comparePreviousYear && cell.previous !== null
+                                ? `${nzDate.format(row.timestamp)}, ${column.timeLabel}: ${formatHeatmapValue(cell.current)}; ${heatmap.previousYear}: ${formatHeatmapValue(cell.previous)}; change ${deltaLabel} kWh`
+                                : `${nzDate.format(row.timestamp)}, ${column.timeLabel}: ${formatHeatmapValue(cell.current)}`;
+                          const style =
+                            cell.current === null
+                              ? undefined
+                              : comparePreviousYear
+                                ? cell.delta === null
+                                  ? {
+                                      backgroundColor: "#eef2f0",
+                                      color: "#6e7d7c",
+                                    }
+                                  : heatmapCellStyle(
+                                      cell.delta,
+                                      heatmap.maximumDelta,
+                                      true,
+                                    )
+                                : heatmapCellStyle(
+                                    cell.current,
+                                    heatmap.maximumUsage,
+                                    false,
+                                  );
+
+                          return (
+                            <td
+                              key={column.key}
+                              className={`heatmap-cell ${
+                                cell.current === null
+                                  ? "heatmap-cell-empty"
+                                  : comparePreviousYear && cell.delta === null
+                                    ? "heatmap-cell-unmatched"
+                                    : ""
+                              }`}
+                              style={style}
+                              title={title}
+                            >
+                              <strong>
+                                {cell.current === null
+                                  ? "—"
+                                  : numberFormatter.format(cell.current)}
+                              </strong>
+                              <small
+                                className={
+                                  comparePreviousYear && cell.delta !== null
+                                    ? cell.delta > 0
+                                      ? "heatmap-delta-up"
+                                      : cell.delta < 0
+                                        ? "heatmap-delta-down"
+                                        : "heatmap-delta-flat"
+                                    : ""
+                                }
+                              >
+                                {cell.current === null
+                                  ? "No data"
+                                  : comparePreviousYear
+                                    ? cell.delta === null
+                                    ? "No prior"
+                                    : `${deltaLabel} kWh`
+                                    : "kWh"}
+                              </small>
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="heatmap-footer">
+                <div
+                  className={`heatmap-scale ${
+                    comparePreviousYear
+                      ? "heatmap-scale-comparison"
+                      : "heatmap-scale-usage"
+                  }`}
+                  aria-label={
+                    comparePreviousYear
+                      ? "Colour scale from lower to higher usage than the previous year"
+                      : "Colour scale from lower to higher usage"
+                  }
+                >
+                  <span>
+                    {comparePreviousYear ? "Less than prior year" : "Lower"}
+                  </span>
+                  <i />
+                  <span>
+                    {comparePreviousYear ? "More than prior year" : "Higher"}
+                  </span>
+                </div>
+                {heatmapResolution === "tariff" ? (
+                  <p>
+                    Peak-window columns are time bands. Weekend uncontrolled
+                    usage remains off-peak under the tariff rules.
+                  </p>
+                ) : null}
+              </div>
+            </section>
+          ) : null}
 
           <div className="analysis-grid">
             <section className="panel profile-panel">
