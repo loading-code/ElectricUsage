@@ -161,14 +161,69 @@ summary:focus-visible {
   width: min(1500px, calc(100% - 48px));
   margin: 0 auto;
   padding: 34px 0 64px;
+  transition:
+    grid-template-columns 180ms ease,
+    gap 180ms ease;
 }
 
 .filter-panel {
   align-self: start;
   position: sticky;
   top: 22px;
+  min-width: 0;
   padding-right: 28px;
   border-right: 1px solid var(--line);
+}
+
+.filter-collapse-button {
+  display: none;
+}
+
+@media (min-width: 861px) {
+  .filter-collapse-button {
+    position: absolute;
+    z-index: 5;
+    top: -8px;
+    right: -15px;
+    display: grid;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    place-items: center;
+    border: 1px solid #cfd9d6;
+    border-radius: 50%;
+    background: #ffffff;
+    box-shadow: 0 5px 14px rgba(22, 51, 50, 0.09);
+    color: var(--teal);
+    cursor: pointer;
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 23px;
+    line-height: 1;
+    transition:
+      background 140ms ease,
+      color 140ms ease,
+      transform 140ms ease;
+  }
+
+  .filter-collapse-button:hover {
+    background: var(--ink);
+    color: white;
+    transform: scale(1.05);
+  }
+
+  .dashboard-grid.filters-collapsed {
+    grid-template-columns: 48px minmax(0, 1fr);
+    gap: 28px;
+  }
+
+  .filters-collapsed .filter-panel {
+    min-height: 190px;
+    padding-right: 0;
+  }
+
+  .filters-collapsed .filter-panel-body {
+    display: none;
+  }
 }
 
 .filter-heading,
@@ -1058,7 +1113,7 @@ summary:focus-visible {
 .heatmap-table {
   width: max-content;
   min-width: 100%;
-  border-spacing: 3px;
+  border-spacing: 2px;
   border-collapse: separate;
   table-layout: fixed;
 }
@@ -1072,7 +1127,7 @@ summary:focus-visible {
   position: sticky;
   z-index: 2;
   top: 0;
-  height: 44px;
+  height: 36px;
   background: #f7f9f7;
   color: #607270;
   font-size: 8px;
@@ -1097,9 +1152,9 @@ summary:focus-visible {
 .heatmap-table .heatmap-day {
   position: sticky;
   left: 0;
-  width: 58px;
-  min-width: 58px;
-  max-width: 58px;
+  width: 36px;
+  min-width: 36px;
+  max-width: 36px;
   border-right: 1px solid var(--line);
   background: #f7f9f7;
 }
@@ -1110,41 +1165,29 @@ summary:focus-visible {
 
 .heatmap-table .heatmap-day {
   z-index: 1;
-  height: 40px;
+  height: 32px;
   color: var(--ink);
-  text-align: left;
-}
-
-.heatmap-day strong,
-.heatmap-day span {
-  display: block;
-  padding-left: 8px;
+  text-align: center;
+  vertical-align: middle;
 }
 
 .heatmap-day strong {
+  display: block;
   font-family: Georgia, "Times New Roman", serif;
-  font-size: 14px;
-  font-weight: 500;
+  font-size: 13px;
+  font-weight: 600;
   line-height: 1;
 }
 
-.heatmap-day span {
-  margin-top: 3px;
-  color: var(--muted);
-  font-size: 7px;
-  font-weight: 800;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
 .heatmap-weekend .heatmap-day {
-  background: #edf2ee;
+  background: #d5ddda;
 }
 
 .heatmap-cell {
-  height: 40px;
-  border-radius: 6px;
+  height: 32px;
+  border-radius: 5px;
   text-align: center;
+  vertical-align: middle;
   transition:
     filter 120ms ease,
     transform 120ms ease;
@@ -1164,15 +1207,17 @@ summary:focus-visible {
 }
 
 .heatmap-cell strong {
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 800;
+  line-height: 1;
 }
 
 .heatmap-cell small {
-  margin-top: 2px;
+  margin-top: 1px;
   color: inherit;
-  font-size: 7px;
+  font-size: 6.5px;
   font-weight: 700;
+  line-height: 1;
   opacity: 0.82;
 }
 
@@ -1202,14 +1247,14 @@ summary:focus-visible {
 
 .heatmap-half-hour thead th:not(.heatmap-corner),
 .heatmap-half-hour .heatmap-cell {
-  width: 61px;
-  min-width: 61px;
+  width: 43px;
+  min-width: 43px;
 }
 
 .heatmap-hourly thead th:not(.heatmap-corner),
 .heatmap-hourly .heatmap-cell {
-  width: 66px;
-  min-width: 66px;
+  width: 47px;
+  min-width: 47px;
 }
 
 .heatmap-tariff thead th:not(.heatmap-corner),

@@ -674,6 +674,7 @@ export default function Home() {
   const [heatmapMonth, setHeatmapMonth] = useState("");
   const [comparePreviousYear, setComparePreviousYear] = useState(false);
   const [activeView, setActiveView] = useState<DashboardView>("usage");
+  const [filtersCollapsed, setFiltersCollapsed] = useState(false);
   const [enabled, setEnabled] = useState<Record<CategoryKey, boolean>>({
     controlled: true,
     peak: true,
@@ -1221,114 +1222,135 @@ export default function Home() {
         </div>
       </header>
 
-      <div className="dashboard-grid">
+      <div
+        className={`dashboard-grid ${filtersCollapsed ? "filters-collapsed" : ""}`}
+      >
         <aside className="filter-panel" aria-label="Dashboard filters">
-          <div className="filter-heading">
-            <span className="eyebrow">Refine the view</span>
-            <button
-              type="button"
-              onClick={() => {
-                setPreset("30d", 30);
-                setDayType("all");
-                setStartMinute(0);
-                setEndMinute(1440);
-                setEnabled({
-                  controlled: true,
-                  peak: true,
-                  offpeak: true,
-                });
-                setRates({
-                  controlled: 28.49,
-                  peak: 39.92,
-                  offpeak: 26.12,
-                });
-                setTariffDailyCharge(2.7544);
-                setSpotCharges(DEFAULT_SPOT_CHARGES);
-                setComparePreviousYear(false);
-                setHeatmapResolution("hourly");
-                setHeatmapMonth(toInputDate(coverageEnd).slice(0, 7));
-              }}
-            >
-              Reset
-            </button>
-          </div>
+          <button
+            type="button"
+            className="filter-collapse-button"
+            aria-expanded={!filtersCollapsed}
+            aria-controls="dashboard-filter-content"
+            aria-label={filtersCollapsed ? "Show filters" : "Hide filters"}
+            title={filtersCollapsed ? "Show filters" : "Hide filters"}
+            onClick={() => setFiltersCollapsed((current) => !current)}
+          >
+            <span aria-hidden="true">{filtersCollapsed ? "›" : "‹"}</span>
+          </button>
 
-          <div className="filter-section">
-            <h2>Usage type</h2>
-            <div className="toggle-list">
-              {categoryKeys.map((key) => (
-                <Toggle
-                  key={key}
-                  category={key}
-                  checked={enabled[key]}
-                  onChange={() => toggleCategory(key)}
-                />
-              ))}
+          <div className="filter-panel-body" id="dashboard-filter-content">
+            <div className="filter-heading">
+              <span className="eyebrow">Refine the view</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setPreset("30d", 30);
+                  setDayType("all");
+                  setStartMinute(0);
+                  setEndMinute(1440);
+                  setEnabled({
+                    controlled: true,
+                    peak: true,
+                    offpeak: true,
+                  });
+                  setRates({
+                    controlled: 28.49,
+                    peak: 39.92,
+                    offpeak: 26.12,
+                  });
+                  setTariffDailyCharge(2.7544);
+                  setSpotCharges(DEFAULT_SPOT_CHARGES);
+                  setComparePreviousYear(false);
+                  setHeatmapResolution("hourly");
+                  setHeatmapMonth(toInputDate(coverageEnd).slice(0, 7));
+                }}
+              >
+                Reset
+              </button>
             </div>
-          </div>
 
-          <div className="filter-section">
-            <h2>Day type</h2>
-            <div className="segmented segmented-three">
-              {(["all", "weekdays", "weekends"] as DayType[]).map((value) => (
-                <button
-                  type="button"
-                  key={value}
-                  className={dayType === value ? "active" : ""}
-                  onClick={() => setDayType(value)}
-                >
-                  {value === "all"
-                    ? "All"
-                    : value === "weekdays"
-                      ? "Weekdays"
-                      : "Weekends"}
-                </button>
-              ))}
+            <div className="filter-section">
+              <h2>Usage type</h2>
+              <div className="toggle-list">
+                {categoryKeys.map((key) => (
+                  <Toggle
+                    key={key}
+                    category={key}
+                    checked={enabled[key]}
+                    onChange={() => toggleCategory(key)}
+                  />
+                ))}
+              </div>
             </div>
-          </div>
 
-          <div className="filter-section">
-            <div className="section-heading-row">
-              <h2>Time of day</h2>
-              <span>
-                {formatTime(startMinute)}–{formatTime(endMinute)}
-              </span>
+            <div className="filter-section">
+              <h2>Day type</h2>
+              <div className="segmented segmented-three">
+                {(["all", "weekdays", "weekends"] as DayType[]).map(
+                  (value) => (
+                    <button
+                      type="button"
+                      key={value}
+                      className={dayType === value ? "active" : ""}
+                      onClick={() => setDayType(value)}
+                    >
+                      {value === "all"
+                        ? "All"
+                        : value === "weekdays"
+                          ? "Weekdays"
+                          : "Weekends"}
+                    </button>
+                  ),
+                )}
+              </div>
             </div>
-            <div className="time-selects">
-              <label>
-                From
-                <select
-                  value={startMinute}
-                  onChange={(event) => setStartMinute(Number(event.target.value))}
-                >
-                  {timeOptions.slice(0, -1).map((minutes) => (
-                    <option key={minutes} value={minutes}>
-                      {formatTime(minutes)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <span aria-hidden="true">→</span>
-              <label>
-                To
-                <select
-                  value={endMinute}
-                  onChange={(event) => setEndMinute(Number(event.target.value))}
-                >
-                  {timeOptions.slice(1).map((minutes) => (
-                    <option key={minutes} value={minutes}>
-                      {formatTime(minutes)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-            <p className="microcopy">
-              If the end is earlier, the selection runs overnight.
-            </p>
-          </div>
 
-          <details className="rate-card">
+            <div className="filter-section">
+              <div className="section-heading-row">
+                <h2>Time of day</h2>
+                <span>
+                  {formatTime(startMinute)}–{formatTime(endMinute)}
+                </span>
+              </div>
+              <div className="time-selects">
+                <label>
+                  From
+                  <select
+                    value={startMinute}
+                    onChange={(event) =>
+                      setStartMinute(Number(event.target.value))
+                    }
+                  >
+                    {timeOptions.slice(0, -1).map((minutes) => (
+                      <option key={minutes} value={minutes}>
+                        {formatTime(minutes)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <span aria-hidden="true">→</span>
+                <label>
+                  To
+                  <select
+                    value={endMinute}
+                    onChange={(event) =>
+                      setEndMinute(Number(event.target.value))
+                    }
+                  >
+                    {timeOptions.slice(1).map((minutes) => (
+                      <option key={minutes} value={minutes}>
+                        {formatTime(minutes)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <p className="microcopy">
+                If the end is earlier, the selection runs overnight.
+              </p>
+            </div>
+
+            <details className="rate-card">
             <summary>
               <span>
                 <b>Tariff rates</b>
@@ -1386,14 +1408,15 @@ export default function Home() {
                 Daily charge includes GST and applies once per included day.
               </small>
             </div>
-          </details>
+            </details>
 
-          <div className="tariff-note">
-            <span aria-hidden="true">i</span>
-            <p>
-              Peak is classified on weekdays from <b>07:00–11:00</b> and{" "}
-              <b>17:00–21:00</b>. Boundary end-times are off-peak.
-            </p>
+            <div className="tariff-note">
+              <span aria-hidden="true">i</span>
+              <p>
+                Peak is classified on weekdays from <b>07:00–11:00</b> and{" "}
+                <b>17:00–21:00</b>. Boundary end-times are off-peak.
+              </p>
+            </div>
           </div>
         </aside>
 
@@ -1775,7 +1798,6 @@ export default function Home() {
                       >
                         <th className="heatmap-day" scope="row">
                           <strong>{row.day}</strong>
-                          <span>{row.weekday}</span>
                         </th>
                         {row.cells.map((cell, columnIndex) => {
                           const column = heatmap.columns[columnIndex];
@@ -1827,25 +1849,21 @@ export default function Home() {
                                   ? "—"
                                   : numberFormatter.format(cell.current)}
                               </strong>
-                              <small
-                                className={
-                                  comparePreviousYear && cell.delta !== null
-                                    ? cell.delta > 0
-                                      ? "heatmap-delta-up"
-                                      : cell.delta < 0
-                                        ? "heatmap-delta-down"
-                                        : "heatmap-delta-flat"
-                                    : ""
-                                }
-                              >
-                                {cell.current === null
-                                  ? "No data"
-                                  : comparePreviousYear
-                                    ? cell.delta === null
-                                    ? "No prior"
-                                    : `${deltaLabel} kWh`
-                                    : "kWh"}
-                              </small>
+                              {cell.current !== null && comparePreviousYear ? (
+                                <small
+                                  className={
+                                    cell.delta !== null
+                                      ? cell.delta > 0
+                                        ? "heatmap-delta-up"
+                                        : cell.delta < 0
+                                          ? "heatmap-delta-down"
+                                          : "heatmap-delta-flat"
+                                      : ""
+                                  }
+                                >
+                                  {cell.delta === null ? "No prior" : deltaLabel}
+                                </small>
+                              ) : null}
                             </td>
                           );
                         })}
