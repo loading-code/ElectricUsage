@@ -282,9 +282,16 @@ function heatmapCellStyle(
     };
   }
 
+  const hue =
+    strength <= 0.5
+      ? 112 - (strength / 0.5) * 82
+      : 30 - ((strength - 0.5) / 0.5) * 26;
+  const saturation = 48 + strength * 30;
+  const lightness = 91 - strength * 49;
+
   return {
-    backgroundColor: `rgba(23, 107, 135, ${0.08 + strength * 0.86})`,
-    color: strength > 0.58 ? "#ffffff" : "#163332",
+    backgroundColor: `hsl(${hue} ${saturation}% ${lightness}%)`,
+    color: strength > 0.82 ? "#ffffff" : "#163332",
   };
 }
 
@@ -1759,7 +1766,10 @@ export default function Home() {
                     </span>
                   )
                 ) : (
-                  <span>Darker cells indicate higher consumption.</span>
+                  <span>
+                    Light green indicates low usage; orange and red indicate
+                    higher usage.
+                  </span>
                 )}
               </div>
 

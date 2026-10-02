@@ -1298,7 +1298,7 @@ summary:focus-visible {
 }
 
 .heatmap-scale-usage i {
-  background: linear-gradient(90deg, rgba(23, 107, 135, 0.08), #176b87);
+  background: linear-gradient(90deg, #dff1d9 0%, #f2a93b 52%, #cc3e36 100%);
 }
 
 .heatmap-scale-comparison i {
