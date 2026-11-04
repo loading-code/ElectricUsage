@@ -11,6 +11,7 @@ import CostComparison, {
   DEFAULT_SPOT_CHARGES,
   type SpotChargeSettings,
 } from "./cost-comparison";
+import { isPeakPeriod } from "./tariff-rules";
 
 type CategoryKey = "controlled" | "peak" | "offpeak";
 type DayType = "all" | "weekdays" | "weekends";
@@ -293,18 +294,6 @@ function heatmapCellStyle(
     backgroundColor: `hsl(${hue} ${saturation}% ${lightness}%)`,
     color: strength > 0.82 ? "#ffffff" : "#163332",
   };
-}
-
-function isPeakPeriod(timestamp: number) {
-  const date = new Date(timestamp);
-  const day = date.getUTCDay();
-  const minute = date.getUTCHours() * 60 + date.getUTCMinutes();
-  const weekday = day >= 1 && day <= 5;
-  return (
-    weekday &&
-    ((minute >= 7 * 60 && minute < 11 * 60) ||
-      (minute >= 17 * 60 && minute < 21 * 60))
-  );
 }
 
 function passesDayType(timestamp: number, dayType: DayType) {
@@ -658,7 +647,7 @@ function Toggle({
           {category === "controlled"
             ? "Dedicated controlled meter"
             : category === "peak"
-              ? "Weekdays · peak windows"
+              ? "Weekdays · seasonal peak windows"
               : "All remaining uncontrolled use"}
         </small>
       </span>
@@ -1420,8 +1409,10 @@ export default function Home() {
             <div className="tariff-note">
               <span aria-hidden="true">i</span>
               <p>
-                Peak is classified on weekdays from <b>07:00–11:00</b> and{" "}
-                <b>17:00–21:00</b>. Boundary end-times are off-peak.
+                Peak applies on weekdays from <b>07:00–11:00</b> and{" "}
+                <b>17:00–21:00</b>. From 2026, these windows apply only in{" "}
+                <b>April–September</b>; all other periods are off-peak.
+                Boundary end-times are off-peak.
               </p>
             </div>
           </div>
@@ -1906,8 +1897,9 @@ export default function Home() {
                 </div>
                 {heatmapResolution === "tariff" ? (
                   <p>
-                    Peak-window columns are time bands. Weekend uncontrolled
-                    usage remains off-peak under the tariff rules.
+                    Peak-window columns show clock-time bands. From 2026 they
+                    are peak-rated only April–September. Weekend uncontrolled
+                    usage remains off-peak.
                   </p>
                 ) : null}
               </div>
@@ -1924,8 +1916,8 @@ export default function Home() {
                 <span className="panel-unit">kWh / half-hour</span>
               </div>
               <div className="peak-band-labels" aria-hidden="true">
-                <span>Morning peak 07–11</span>
-                <span>Evening peak 17–21</span>
+                <span>Morning window 07–11</span>
+                <span>Evening window 17–21</span>
               </div>
               <Chart
                 data={analysis.averageProfile}

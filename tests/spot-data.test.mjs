@@ -17,9 +17,12 @@ const [usage, spot] = await Promise.all([
 
 function isPeak(timestamp) {
   const date = new Date(timestamp);
+  const year = date.getUTCFullYear();
+  const month = date.getUTCMonth() + 1;
   const day = date.getUTCDay();
   const minute = date.getUTCHours() * 60 + date.getUTCMinutes();
   return (
+    (year < 2026 || (month >= 4 && month <= 9)) &&
     day >= 1 &&
     day <= 5 &&
     ((minute >= 420 && minute < 660) ||

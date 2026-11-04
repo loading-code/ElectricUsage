@@ -6,7 +6,8 @@ An interactive dashboard for exploring controlled, peak, and off-peak electricit
 
 - Register ID `2` is controlled consumption.
 - Register ID `1` is uncontrolled consumption.
-- Uncontrolled usage is peak on weekdays from 07:00-11:00 and 17:00-21:00.
+- Peak applies to uncontrolled weekday usage from 07:00-11:00 and 17:00-21:00.
+- From 2026 onward, those peak windows apply only from April through September.
 - All remaining uncontrolled usage is off-peak.
 
 ## Cost comparison

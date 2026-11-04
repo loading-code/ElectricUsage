@@ -7,6 +7,7 @@ import {
   useState,
   type MouseEvent as ReactMouseEvent,
 } from "react";
+import { isPeakPeriod } from "./tariff-rules";
 
 type CategoryKey = "controlled" | "peak" | "offpeak";
 type DayType = "all" | "weekdays" | "weekends";
@@ -241,18 +242,6 @@ function toInputDate(timestamp: number) {
 function formatTime(timestamp: number) {
   const date = new Date(timestamp);
   return `${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}`;
-}
-
-function isPeakPeriod(timestamp: number) {
-  const date = new Date(timestamp);
-  const day = date.getUTCDay();
-  const minute = date.getUTCHours() * 60 + date.getUTCMinutes();
-  return (
-    day >= 1 &&
-    day <= 5 &&
-    ((minute >= 7 * 60 && minute < 11 * 60) ||
-      (minute >= 17 * 60 && minute < 21 * 60))
-  );
 }
 
 function passesDayType(timestamp: number, dayType: DayType) {
