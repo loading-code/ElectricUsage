@@ -206,6 +206,31 @@ const firstTimestamp = baseTimestamp + data[0][0] * intervalMs;
 const lastTimestamp =
   baseTimestamp + data[data.length - 1][0] * intervalMs;
 const sourceNames = sourcePaths.map((path) => basename(path));
+const gapPeriods = [];
+
+for (const slot of missingSlots) {
+  const previousPeriod = gapPeriods.at(-1);
+  if (previousPeriod && previousPeriod.endSlot === slot) {
+    previousPeriod.endSlot += 1;
+    previousPeriod.intervalCount += 1;
+    previousPeriod.endDate = new Date(
+      baseTimestamp + (slot + 1) * intervalMs,
+    ).toISOString();
+  } else {
+    gapPeriods.push({
+      startSlot: slot,
+      endSlot: slot + 1,
+      startDate: new Date(baseTimestamp + slot * intervalMs).toISOString(),
+      endDate: new Date(baseTimestamp + (slot + 1) * intervalMs).toISOString(),
+      intervalCount: 1,
+    });
+  }
+}
+
+for (const period of gapPeriods) {
+  delete period.startSlot;
+  delete period.endSlot;
+}
 
 const payload = {
   meta: {
@@ -220,6 +245,7 @@ const payload = {
     intervalCount: data.length,
     duplicateIntervalCount: duplicateSlots.size,
     filledIntervalCount: missingSlots.length,
+    gapPeriods,
     skippedRows,
   },
   data,

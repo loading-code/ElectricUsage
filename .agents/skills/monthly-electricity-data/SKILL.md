@@ -17,6 +17,7 @@ After processing, inspect the JSON `meta` values and confirm:
 - `intervalCount` spans every half-hour slot from the first to last date; each slot appears once in `data`.
 - `duplicateIntervalCount` reports source collisions that were resolved in source order. These are not duplicate output slots.
 - `filledIntervalCount` is zero when source coverage is complete. Missing slots are filled with zero to preserve the dashboard's continuous interval axis; if nonzero, call out this data-quality limitation when reporting the update.
+- `gapPeriods` lists each consecutive internal gap with its UTC start, exclusive end, and number of half-hour intervals. The processor can only identify gaps between the first and last observed readings.
 - `skippedRows` is understood. Rows outside supported registers, malformed timestamps, or invalid values are skipped, so investigate unexpected increases before publishing.
 
 The processed JSON is the dashboard's published data artifact. The Pages workflow deploys it when the update reaches `main`; do not push or deploy unless the user has authorized that external publication.
