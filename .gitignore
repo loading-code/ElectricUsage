@@ -46,3 +46,4 @@ next-env.d.ts
 
 # local source exports outside data/ (the dashboard uses the processed public JSON)
 /*.csv
+/data/electricity-interval-meter-readings_*.csv

@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
 
 const DEFAULT_SOURCE_PATHS = [
@@ -25,11 +25,45 @@ function parseArguments(arguments_) {
   );
 
   return {
-    sourcePaths: (sourcePaths.length ? sourcePaths : DEFAULT_SOURCE_PATHS).map(
-      (path) => resolve(path),
+    sourcePaths: (sourcePaths.length ? sourcePaths : discoverSources()).map((path) =>
+      resolve(path),
     ),
     outputPath: resolve(outputPath),
   };
+}
+
+function discoverSources() {
+  const monthlyExports = readdirSync("data")
+    .filter((name) => /^electricity-interval-meter-readings_\d{8}_\d{6}\.csv$/i.test(name))
+    .sort()
+    .map((name) => `data/${name}`);
+
+  return [...DEFAULT_SOURCE_PATHS, ...monthlyExports];
+}
+
+function parseCsvLine(line) {
+  const fields = [];
+  let field = "";
+  let quoted = false;
+
+  for (let index = 0; index < line.length; index += 1) {
+    const character = line[index];
+    if (character === '"') {
+      if (quoted && line[index + 1] === '"') {
+        field += '"';
+        index += 1;
+      } else {
+        quoted = !quoted;
+      }
+    } else if (character === "," && !quoted) {
+      fields.push(field);
+      field = "";
+    } else {
+      field += character;
+    }
+  }
+  fields.push(field);
+  return fields;
 }
 
 function parseLegacyTimestamp(value) {
@@ -66,10 +100,9 @@ function parseCurrentTimestamp(value) {
   );
 }
 
-function parseLegacyRow(line) {
-  if (!line.startsWith("DET,")) return null;
+function parseLegacyRow(fields) {
+  if (fields[0] !== "DET") return null;
 
-  const fields = line.split(",");
   const meter = fields[7];
   const timestamp = parseLegacyTimestamp(fields[9] ?? "");
   const value = Number(fields[12]);
@@ -83,19 +116,10 @@ function parseLegacyRow(line) {
   };
 }
 
-function parseCurrentRow(line) {
-  if (
-    !line ||
-    line.startsWith("Supply Point Identifier,") ||
-    line.startsWith("DET,")
-  ) {
-    return null;
-  }
-
-  const fields = line.split(",");
-  const register = fields[6];
+function parseCurrentRow(fields, columns) {
+  const register = fields[columns.register];
   const timestamp = parseCurrentTimestamp(fields[1] ?? "");
-  const value = Number(fields[3]);
+  const value = Number(fields[columns.value]);
 
   if (register !== "1" && register !== "2") return false;
 
@@ -106,22 +130,33 @@ function parseCurrentRow(line) {
   };
 }
 
-function parseRow(line) {
-  return line.startsWith("DET,")
-    ? parseLegacyRow(line)
-    : parseCurrentRow(line);
-}
-
 const { sourcePaths, outputPath } = parseArguments(process.argv.slice(2));
 const intervals = new Map();
 const populatedReadings = new Set();
 const duplicateSlots = new Set();
+const missingSlots = [];
 let detailRows = 0;
 let skippedRows = 0;
 
 for (const sourcePath of sourcePaths) {
+  let columns = { register: 6, value: 3 };
   for (const line of readFileSync(sourcePath, "utf8").split(/\r?\n/)) {
-    const reading = parseRow(line);
+    if (!line) continue;
+    const fields = parseCsvLine(line);
+    fields[0] = fields[0].replace(/^\uFEFF/, "");
+    if (fields[0] === "Supply Point Identifier") {
+      columns = {
+        register: fields.indexOf("Register ID"),
+        value: fields.indexOf("Value"),
+      };
+      if (columns.register === -1 || columns.value === -1) {
+        throw new Error(`Unsupported meter CSV header in ${sourcePath}`);
+      }
+      continue;
+    }
+    const reading = fields[0] === "DET"
+      ? parseLegacyRow(fields)
+      : parseCurrentRow(fields, columns);
     if (reading === null) continue;
 
     if (
@@ -148,12 +183,23 @@ for (const sourcePath of sourcePaths) {
   }
 }
 
-const data = [...intervals.values()].sort((a, b) => a[0] - b[0]);
+const populatedData = [...intervals.values()].sort((a, b) => a[0] - b[0]);
 
-if (data.length === 0) {
+if (populatedData.length === 0) {
   throw new Error(
     `No usable interval rows were found in ${sourcePaths.join(", ")}`,
   );
+}
+
+const data = [];
+for (let slot = populatedData[0][0]; slot <= populatedData.at(-1)[0]; slot += 1) {
+  const reading = intervals.get(slot);
+  if (reading) {
+    data.push(reading);
+  } else {
+    data.push([slot, 0, 0]);
+    missingSlots.push(slot);
+  }
 }
 
 const firstTimestamp = baseTimestamp + data[0][0] * intervalMs;
@@ -173,6 +219,7 @@ const payload = {
     detailRows,
     intervalCount: data.length,
     duplicateIntervalCount: duplicateSlots.size,
+    filledIntervalCount: missingSlots.length,
     skippedRows,
   },
   data,
@@ -190,6 +237,7 @@ console.log(
       lastDate: payload.meta.lastDate,
       intervals: payload.meta.intervalCount,
       duplicateIntervals: payload.meta.duplicateIntervalCount,
+      filledIntervals: payload.meta.filledIntervalCount,
       skippedRows,
     },
     null,
