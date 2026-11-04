@@ -41,10 +41,17 @@ npm run build:pages
 
 The output is written to `dist-pages/`.
 
-To refresh the processed usage and spot-price data after replacing either CSV:
+To process the local meter and spot-price CSVs:
 
 ```bash
 npm run data
+```
+
+When a new monthly meter export arrives, update the meter dataset and extend the official settled spot-price data to the same date:
+
+```bash
+npm run data:usage
+npm run data:spot:refresh
 ```
 
 The stored Wilton prices come from the Electricity Authority's official
@@ -55,3 +62,9 @@ The stored Wilton prices come from the Electricity Authority's official
 The workflow in `.github/workflows/pages.yml` builds and deploys the dashboard to GitHub Pages whenever `main` is updated. It can also be run manually from the Actions tab.
 
 The dashboard loads the processed data in `public/electricity-data.json` and `public/spot-price-data.json`.
+
+## Project documentation
+
+- [Architecture](docs/architecture.md)
+- [File structure](docs/file-structure.md)
+- [Deployment and monthly data refresh](docs/deployment.md)
