@@ -7,7 +7,12 @@ description: Process a newly received monthly smart-meter CSV for the Electricit
 
 Use this skill when a new `electricity-interval-meter-readings_YYYYMMDD_HHMMSS.csv` export arrives in `data/`.
 
-Run `npm run data:usage` from the repository root. The processor combines the legacy history with every monthly export it finds, using filename order so later exports replace earlier readings when intervals overlap. It converts the source registers to the dashboard's controlled and uncontrolled values and writes `public/electricity-data.json`.
+Run these commands from the repository root:
+
+1. `npm run data:usage` combines the legacy history with every monthly export it finds, using filename order so later exports replace earlier readings when intervals overlap. It writes the anonymized `public/electricity-data.json`.
+2. `npm run data:spot:refresh` reads that meter dataset's latest date, fetches the Electricity Authority's daily final-energy-price CSVs for WIL0331 from the current spot-price tail through that date, updates `data/wilton_settled_spot_prices_since_2024.csv`, and regenerates `public/spot-price-data.json`.
+
+The spot refresh only uses daily files marked final (without the `_I` interim suffix). If an official daily file is unavailable or lacks a complete set of WIL0331 trading periods, the refresh stops before replacing the source CSV; retry after the Authority publishes final prices.
 
 The source export contains supply point and device identifiers. Do not copy source rows or identifiers into reports, logs, dashboard output, or commits. The processed JSON contains only interval indexes and aggregated usage values plus non-identifying processing metadata. Monthly source exports are ignored by Git.
 
